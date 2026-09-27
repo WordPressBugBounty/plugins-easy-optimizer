@@ -1,0 +1,2368 @@
+/* ==========================================================================
+   Easy Optimizer — Admin UI (v1.6.4)
+   ---------------------------------------------------------------------------
+   Rewrite cycle 2: addresses feedback from the v1.6.3 first-cut review.
+   Key changes:
+     - Toggle: native checkbox completely suppressed (no checkmark bleeding),
+       thumb position pixel-locked between on/off so off→on doesn't jump.
+     - Popup grid: forces multi-column even at narrow widths, side-by-side
+       cards with title above button (no description leak).
+     - Popup modal: rules no longer scoped under `.eop_wrap` (the modal
+       renders outside that container).
+     - All WP-core buttons inside the wrap (.button, .button-secondary,
+       .button-primary, submit_button) inherit the indigo design.
+     - Native <select> styled with custom chevron and matching height.
+     - Snapshot table styled; restore/delete buttons match design.
+     - Inter loaded from system or webfont fallback for typography parity.
+     - Tighter wrap margins; no more left/right gutters around the shell.
+   ========================================================================== */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+/* ── 1. Design tokens ─────────────────────────────────────────────────── */
+.eop_wrap,
+.easyopt-popup-overlay {
+    --eop-ink:         #0f172a;
+    --eop-text:        #0f172a;
+    --eop-sub:         #475569;
+    --eop-text-muted:  #475569;
+    --eop-mute:        #94a3b8;
+    --eop-text-soft:   #94a3b8;
+    --eop-surf:        #ffffff;
+    --eop-bg:          #ffffff;
+    --eop-page:        #f6f7f9;
+    --eop-bg-alt:      #f6f7f9;
+    --eop-bg-tab:      #f6f7f9;
+    --eop-line:        #e6e8ee;
+    --eop-border:      #e6e8ee;
+    --eop-line-soft:   #f0f2f6;
+    --eop-border-soft: #f0f2f6;
+
+    --eop-ok:          #10b981;
+    --eop-success:     #10b981;
+    --eop-ok-fg:       #047857;
+    --eop-ok-soft:     #d1fae5;
+    --eop-warn:        #f59e0b;
+    --eop-warn-fg:     #92400e;
+    --eop-warn-soft:   #fef3c7;
+    --eop-bad:         #ef4444;
+    --eop-danger:      #ef4444;
+    --eop-bad-soft:    #fee2e2;
+
+    --eop-brand:       #5b4ed9;
+    --eop-brand-2:     #7a6cf0;
+    --eop-brand-soft:  #eeebff;
+    --eop-brand-soft-2:#f4f2ff;
+    --eop-brand-deep:  #4a3fc4;
+    --eop-brand-dark:  #4a3fc4;
+    --eop-brand-fg:    #ffffff;
+
+    --eop-r:           12px;
+    --eop-radius:      12px;
+    --eop-r-sm:        8px;
+    --eop-radius-sm:   8px;
+    --eop-r-xs:        6px;
+    --eop-shadow:      0 1px 2px rgba(15,23,42,.04), 0 4px 12px rgba(15,23,42,.04);
+    --eop-shadow-lg:   0 12px 40px rgba(15,23,42,.18);
+    --eop-shadow-focus:0 0 0 3px rgba(91,78,217,.22);
+    --eop-transition:  .15s cubic-bezier(.4,0,.2,1);
+    --eop-font:        "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+
+/* Suppress WP's default page margin / form-table so we're flush with the
+   admin content gutter. Then add tighter wrap chrome. */
+#wpcontent { padding-left: 20px !important; }
+.eop_wrap {
+    width: auto;
+    margin: 16px 20px 40px 0;
+    background: var(--eop-page);
+    border: 1px solid var(--eop-border);
+    border-radius: var(--eop-radius);
+    color: var(--eop-ink);
+    font-family: var(--eop-font);
+    font-size: 14px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow: hidden;
+    position: relative;
+}
+.eop_wrap *, .eop_wrap *::before, .eop_wrap *::after { box-sizing: border-box; }
+.eop_wrap button { font: inherit; cursor: pointer; }
+
+/* Hide WordPress admin notices that may inject themselves into our wrap */
+.eop_wrap > .notice, .eop_wrap > .updated, .eop_wrap > .error { display: none; }
+
+/* Hidden attribute must always win */
+[hidden] { display: none !important; }
+
+/* ── 2. App shell ─────────────────────────────────────────────────────── */
+.eop-app {
+    display: grid;
+    grid-template-columns: 240px 1fr;
+    min-height: 720px;
+}
+
+/* Sidebar */
+.eop-sidebar {
+    background: var(--eop-surf);
+    border-right: 1px solid var(--eop-line);
+    display: flex;
+    flex-direction: column;
+    padding: 18px 0;
+}
+.eop-brand {
+    padding: 0 22px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-bottom: 1px solid var(--eop-line);
+    margin-bottom: 14px;
+}
+.eop-brand__mark {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, var(--eop-brand), var(--eop-brand-2));
+    display: grid;
+    place-items: center;
+    color: #fff;
+    flex-shrink: 0;
+}
+.eop-brand__mark .eop-icon { width: 16px; height: 16px; }
+.eop-brand__name {
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: -.01em;
+    color: var(--eop-ink);
+    line-height: 1.2;
+    font-family: var(--eop-font);
+}
+.eop-brand__meta {
+    font-size: 11px;
+    color: var(--eop-mute);
+    margin-top: 2px;
+}
+
+/* (2.6.5) No `flex: 1`. The nav used to grow and push Help / Rate to the very
+   bottom of the sidebar, leaving a large dead gap between Settings and them on
+   tall screens. Now the nav takes its natural height and the Help / Rate cards
+   sit directly beneath Settings, with a little breathing room (see
+   .eop-sidebar__help margin-top). The empty space falls at the bottom instead. */
+.eop-nav { flex: 0 0 auto; padding: 0 12px; }
+.eop-nav__group { margin-bottom: 16px; }
+.eop-nav__group-label {
+    font-size: 10px;
+    letter-spacing: 1.3px;
+    color: var(--eop-mute);
+    font-weight: 700;
+    padding: 0 10px 8px;
+    text-transform: uppercase;
+}
+
+/* (2.6.5) Collapsible sidebar group — "Advanced" — ships closed so a fresh
+   install shows eight items instead of thirteen.
+
+   PROTOTYPE VARIANT A — a bordered, filled PILL, not a flat label. Earlier
+   cuts styled it as a section label that happened to toggle; users read it as
+   static text and never clicked. Real button chrome (border + surface fill)
+   makes it unmistakably a control and clearly distinct from the flat
+   SPEED / TOOLS labels above and below. A leading "layers" glyph anchors it;
+   the trailing chevron rotates on open. No item count — not wanted.
+
+   Selector stays .eop_wrap-qualified so it beats `.eop_wrap button` (0,1,1)
+   in the cascade; a bare class (0,1,0) would lose and inherit button `font`. */
+.eop_wrap .eop-nav__group-toggle {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    margin: 14px 0 4px;
+    padding: 9px 10px;
+    border: 1px solid var(--eop-line);
+    border-radius: 8px;
+    background: var(--eop-surface-soft, #f7f8fa);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    letter-spacing: .4px;
+    font-weight: 600;
+    line-height: 1;
+    text-transform: uppercase;
+    color: var(--eop-sub);
+    text-align: left;
+    transition: color .12s ease, border-color .12s ease, background-color .12s ease;
+}
+/* Hover lifts the whole pill toward the brand — it is a button, so the hover
+   affordance is the entire control, not just the text. */
+.eop_wrap .eop-nav__group-toggle:hover {
+    color: var(--eop-brand);
+    border-color: var(--eop-brand);
+    background: var(--eop-brand-soft, #eeebff);
+}
+.eop_wrap .eop-nav__group-toggle:focus-visible {
+    outline: 2px solid var(--eop-brand);
+    outline-offset: 2px;
+}
+.eop_wrap .eop-nav__group-toggle .eop-icon { flex: 0 0 auto; }
+/* Leading glyph — sized to the pill's 12px text, sits at the label's tone. */
+.eop_wrap .eop-nav__group-glyph {
+    width: 16px;
+    height: 16px;
+    opacity: .8;
+}
+/* Trailing chevron, pushed to the far edge; rotates a quarter-turn on open. */
+.eop-nav__group-text { flex: 1 1 auto; }
+.eop_wrap .eop-nav__group-chev {
+    width: 14px;
+    height: 14px;
+    margin-left: auto;
+    opacity: .7;
+    transition: transform .14s ease, opacity .12s ease;
+}
+.eop_wrap .eop-nav__group--collapsible.is-open .eop-nav__group-chev {
+    transform: rotate(90deg);
+}
+.eop_wrap .eop-nav__group-toggle:hover .eop-nav__group-glyph,
+.eop_wrap .eop-nav__group-toggle:hover .eop-nav__group-chev { opacity: 1; }
+
+.eop-nav__item,
+.eop_wrap .eop-tab.eop-nav__item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: transparent;
+    border: 0;
+    color: var(--eop-sub);
+    font-size: 13px;
+    font-weight: 500;
+    text-align: left;
+    margin-bottom: 2px;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background var(--eop-transition), color var(--eop-transition);
+    position: relative;
+    box-shadow: none;
+}
+.eop-nav__item:hover,
+.eop_wrap .eop-tab.eop-nav__item:hover {
+    background: var(--eop-line-soft);
+    color: var(--eop-ink);
+    text-decoration: none;
+}
+.eop-nav__item:focus,
+.eop_wrap .eop-tab.eop-nav__item:focus {
+    outline: none;
+    box-shadow: var(--eop-shadow-focus);
+}
+.eop-nav__item.active,
+.eop_wrap .eop-tab.eop-nav__item.active {
+    background: var(--eop-brand-soft);
+    color: var(--eop-brand);
+    font-weight: 600;
+}
+.eop-nav__item.active::after,
+.eop_wrap .eop-tab.eop-nav__item.active::after {
+    content: "";
+    width: 5px;
+    height: 5px;
+    border-radius: 3px;
+    background: var(--eop-brand);
+    margin-left: auto;
+}
+.eop-nav__item .eop-icon { width: 16px; height: 16px; flex-shrink: 0; }
+.eop-nav__item span { flex: 1; }
+
+.eop-sidebar__help {
+    /* Extra top margin separates the Help card from Settings now that it sits
+       directly below the nav rather than pinned to the sidebar's bottom. */
+    margin: 22px 12px 4px;
+    padding: 14px;
+    border-radius: 10px;
+    background: var(--eop-page);
+}
+.eop-help__title {
+    font-weight: 600;
+    font-size: 12.5px;
+    margin-bottom: 4px;
+    color: var(--eop-ink);
+}
+.eop-help__body {
+    font-size: 12px;
+    color: var(--eop-sub);
+    line-height: 1.5;
+}
+
+/* Main column */
+.eop-main {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--eop-page);
+}
+
+/* Topbar */
+/* (2.6.0) min-height, not height. The right-hand cluster has always been
+   allowed to wrap, but the bar itself was locked to 56px, so as soon as the
+   pills + Safe Mode + Debug Issues + Debug Log stopped fitting — a narrow
+   laptop, a zoomed browser, or simply larger system text — the wrapped row
+   spilled out of the bar and collided with the content below. Growing the bar
+   instead keeps every state tidy. */
+.eop-topbar {
+    min-height: 56px;
+    background: var(--eop-surf);
+    border-bottom: 1px solid var(--eop-line);
+    padding: 8px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px 16px;
+}
+.eop-crumbs {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--eop-sub);
+    /* Truncate rather than wrap: a two-line breadcrumb ("Object / Cache")
+       doubled the bar's height for no information gain. min-width:0 is what
+       lets a flex item shrink below its content width at all. */
+    min-width: 0;
+    flex: 1 1 auto;
+    white-space: nowrap;
+    overflow: hidden;
+}
+.eop-crumbs__home  { color: var(--eop-sub); }
+.eop-crumbs__sep   { color: var(--eop-mute); }
+.eop-crumbs__active{
+    color: var(--eop-ink);
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.eop-topbar__right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    /* Never squeeze the controls to make room for the breadcrumb. */
+    flex: 0 0 auto;
+}
+/* Below ~1180px the sidebar is already narrowed (see that breakpoint); the
+   two status pills are the first thing to go, because they are decorative and
+   the same information is on the dashboard's own "Serving mode" tile. Dropping
+   them keeps the three functional buttons on a single row. */
+@media (max-width: 1180px) {
+    .eop-topbar__right > .eop-pill { display: none; }
+}
+@media (max-width: 900px) {
+    /* Breadcrumb before the buttons, each on its own full-width row, so
+       neither is squeezed into an unreadable sliver. */
+    .eop-crumbs      { flex: 1 1 100%; }
+    .eop-topbar__right { flex: 1 1 100%; justify-content: flex-start; }
+}
+
+/* Content area — tighter padding to match feedback. */
+.eop-content {
+    padding: 22px 24px 40px;
+    max-width: none;
+}
+.eop-submit-row {
+    margin-top: 20px;
+    padding-top: 18px;
+    border-top: 1px solid var(--eop-line);
+}
+
+/* Panels — only the active one is visible; switched by JS via display:block. */
+.eop-panel { display: none; }
+.eop-panel#eop-panel-dashboard { display: block; }
+
+/* ── 3. Page header / KPI strip / cards / modules ────────────────────── */
+.eop-page-header { margin: 0 0 18px; }
+.eop-page-title {
+    font-size: 22px;
+    font-weight: 700;
+    margin: 0;
+    letter-spacing: -.012em;
+    color: var(--eop-ink);
+    line-height: 1.2;
+    font-family: var(--eop-font);
+}
+.eop-page-desc {
+    font-size: 13px;
+    color: var(--eop-sub);
+    margin: 6px 0 0;
+    max-width: 640px;
+    line-height: 1.55;
+}
+
+.eop-kpi-strip {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-bottom: 14px;
+}
+.eop-metric {
+    background: var(--eop-surf);
+    border: 1px solid var(--eop-line);
+    border-radius: var(--eop-r);
+    padding: 16px 18px;
+}
+.eop-metric__label {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--eop-mute);
+    letter-spacing: .35px;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+}
+.eop-metric__value {
+    font-size: 26px;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--eop-ink);
+    letter-spacing: -.02em;
+    margin-bottom: 6px;
+    font-family: var(--eop-font);
+}
+.eop-metric__value.is-ok    { color: var(--eop-ok-fg); }
+.eop-metric__value.is-warn  { color: var(--eop-warn-fg); }
+.eop-metric__value.is-brand { color: var(--eop-brand); }
+.eop-metric__sub { font-size: 12px; color: var(--eop-sub); }
+
+.eop-grid-2 {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr;
+    gap: 12px;
+}
+
+.eop-card {
+    background: var(--eop-surf);
+    border: 1px solid var(--eop-line);
+    border-radius: var(--eop-r);
+    padding: 20px 22px;
+    margin-bottom: 12px;
+}
+.eop-card__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+}
+.eop-card__kicker {
+    font-size: 11px;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: var(--eop-mute);
+    font-weight: 700;
+    margin-bottom: 4px;
+}
+.eop-card__title {
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: -.01em;
+    color: var(--eop-ink);
+    font-family: var(--eop-font);
+}
+
+/* Module list */
+.eop-module-list { display: flex; flex-direction: column; }
+.eop-module {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--eop-line-soft);
+}
+.eop-module:last-child { border-bottom: 0; }
+.eop-module__left { display: flex; align-items: center; gap: 12px; }
+.eop-module__title { font-size: 13.5px; font-weight: 600; color: var(--eop-ink); }
+.eop-module__detail { font-size: 12px; color: var(--eop-sub); margin-top: 2px; }
+.eop-module__link {
+    color: var(--eop-mute);
+    padding: 6px;
+    border-radius: 6px;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.eop-module__link:hover { background: var(--eop-line-soft); color: var(--eop-brand); }
+
+/* Empty state */
+.eop-empty-state {
+    padding: 16px 4px 4px;
+    text-align: left;
+}
+.eop-empty-state__icon { color: var(--eop-mute); margin-bottom: 10px; }
+.eop-empty-state__icon .eop-icon { width: 24px; height: 24px; }
+.eop-empty-state__text {
+    font-size: 13px;
+    color: var(--eop-sub);
+    line-height: 1.5;
+    margin-bottom: 14px;
+}
+
+.eop-action-msg {
+    margin-top: 12px;
+    font-size: 13px;
+    color: var(--eop-sub);
+    min-height: 20px;
+}
+
+/* ── 4. Panels (settings sections) ───────────────────────────────────── */
+.eop-panel {
+    background: var(--eop-surf);
+    border: 1px solid var(--eop-line);
+    border-radius: var(--eop-r);
+    padding: 22px 24px;
+    margin-bottom: 12px;
+}
+.eop-panel > h2 {
+    font-size: 18px;
+    font-weight: 700;
+    margin: 0 0 4px;
+    letter-spacing: -.01em;
+    color: var(--eop-ink);
+    line-height: 1.3;
+    font-family: var(--eop-font);
+}
+.eop-panel > h2 + p,
+.eop-panel > h2 + label + .description,
+.eop-panel > p.description {
+    font-size: 13px;
+    color: var(--eop-sub);
+    margin: 4px 0 14px;
+    max-width: 720px;
+    line-height: 1.55;
+}
+.eop-panel .eop-section-h {
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: -.005em;
+    color: var(--eop-ink);
+    margin: 24px 0 4px;
+    padding-top: 18px;
+    border-top: 1px solid var(--eop-line);
+    font-family: var(--eop-font);
+}
+.eop-panel .eop-section-h:first-child {
+    border-top: 0;
+    padding-top: 0;
+    margin-top: 0;
+}
+
+/* ── 5. TOGGLE SWITCHES ──────────────────────────────────────────────── */
+/* Universal toggle styling — applies to every checkbox inside .eop-panel.
+   Critical: appearance:none must be set early; we also set color:transparent
+   and override the input box on all states so no native check mark bleeds
+   through on Chromium / Firefox / Safari. */
+
+.eop_wrap .eop-panel input[type="checkbox"] {
+    -webkit-appearance: none !important;
+    -moz-appearance: none !important;
+    appearance: none !important;
+    width: 36px;
+    height: 20px;
+    border-radius: 999px;
+    background: #cbd5e1;
+    background-image: none !important;
+    position: relative;
+    cursor: pointer;
+    transition: background var(--eop-transition);
+    margin: 0;
+    flex-shrink: 0;
+    box-shadow: none;
+    border: 0 !important;
+    outline: 0;
+    vertical-align: middle;
+    color: transparent;
+    font-size: 0;
+    line-height: 0;
+    /* Native check icon on some platforms uses these */
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+}
+.eop_wrap .eop-panel input[type="checkbox"]::before {
+    /* WP admin CSS uses ::before for the check glyph — clobber it. */
+    content: none !important;
+    display: none !important;
+}
+.eop_wrap .eop-panel input[type="checkbox"]::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(0,0,0,.2);
+    transition: left var(--eop-transition);
+    pointer-events: none;
+}
+.eop_wrap .eop-panel input[type="checkbox"]:checked {
+    background: var(--eop-brand);
+    background-image: none !important;
+}
+.eop_wrap .eop-panel input[type="checkbox"]:checked::after {
+    left: 18px;
+}
+.eop_wrap .eop-panel input[type="checkbox"]:focus {
+    box-shadow: var(--eop-shadow-focus);
+    outline: none;
+}
+
+/* Universal label-wrapping for switches OUTSIDE field rows. */
+.eop_wrap .eop-panel label:has(> input[type="checkbox"]) {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--eop-ink);
+    cursor: pointer;
+    margin: 6px 18px 4px 0;
+}
+
+/* ── 6. Setting rows (field rows + select rows) ──────────────────────── */
+.eop_wrap .easyopt-row {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    gap: 16px;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--eop-line-soft);
+}
+.eop_wrap .easyopt-row:last-child { border-bottom: 0; }
+/* (2.5.1) Helper text inside a setting row spans the full row width instead
+   of being auto-placed into the narrow 220px label column. */
+.eop_wrap .easyopt-row > p.description {
+    grid-column: 1 / -1;
+    margin: -2px 0 0;
+    line-height: 1.5;
+}
+.eop_wrap .easyopt-row > label {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--eop-ink);
+}
+
+/* Field row — checkbox + label + optional description */
+.eop_wrap .easyopt-field-row {
+    display: grid;
+    grid-template-columns: 36px 1fr auto;
+    column-gap: 14px;
+    row-gap: 0;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--eop-line-soft);
+    align-items: start;
+}
+.eop_wrap .easyopt-field-row:last-child { border-bottom: 0; padding-bottom: 4px; }
+.eop_wrap .easyopt-field-row > label {
+    grid-column: 1 / 3;
+    display: contents;
+    margin: 0 !important;
+}
+.eop_wrap .easyopt-field-row > label > input[type="checkbox"] {
+    width: 32px;
+    height: 18px;
+    margin: 2px 0 0;
+    grid-column: 1;
+    grid-row: 1;
+    justify-self: start;
+    align-self: start;
+}
+.eop_wrap .easyopt-field-row > label > input[type="checkbox"]::after {
+    width: 14px;
+    height: 14px;
+}
+.eop_wrap .easyopt-field-row > label > input[type="checkbox"]:checked::after {
+    left: 16px;
+}
+.eop_wrap .easyopt-field-row > label > strong {
+    grid-column: 2;
+    grid-row: 1;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--eop-ink);
+    line-height: 1.45;
+    align-self: center;
+}
+.eop_wrap .easyopt-field-row > .description,
+.eop_wrap .easyopt-field-row > p.description {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    font-size: 13px;
+    color: var(--eop-sub);
+    line-height: 1.55;
+    margin: 2px 0 0;
+    max-width: 640px;
+}
+.eop_wrap .easyopt-field-row > .easyopt-popup-field {
+    grid-column: 1 / -1;
+    margin-top: 10px;
+}
+
+/* Popup-only field row (label/strong + popup button, no checkbox).
+   Collapse the 36px first column so the title sits flush. */
+.eop_wrap .easyopt-field-row:has(> label > strong):not(:has(> label > input[type="checkbox"])) {
+    grid-template-columns: 1fr;
+    column-gap: 6px;
+    row-gap: 2px;
+}
+.eop_wrap .easyopt-field-row:has(> label > strong):not(:has(> label > input[type="checkbox"])) > label > strong {
+    grid-column: 1;
+}
+.eop_wrap .easyopt-field-row:has(> label > strong):not(:has(> label > input[type="checkbox"])) > .description,
+.eop_wrap .easyopt-field-row:has(> label > strong):not(:has(> label > input[type="checkbox"])) > p.description {
+    grid-column: 1;
+    margin-top: 0;
+}
+.eop_wrap .easyopt-field-row:has(> label > strong):not(:has(> label > input[type="checkbox"])) > .easyopt-popup-field {
+    grid-column: 1;
+    margin-top: 6px;
+}
+
+/* Form controls — universal */
+.eop_wrap .description,
+.eop_wrap p.description {
+    font-size: 13px;
+    color: var(--eop-sub);
+    line-height: 1.55;
+    margin: 6px 0 12px;
+    max-width: 720px;
+    font-style: normal;
+}
+.eop_wrap .description code,
+.eop_wrap p.description code {
+    background: var(--eop-page);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-family: ui-monospace, Menlo, monospace;
+    color: var(--eop-ink);
+}
+
+/* Inputs */
+.eop_wrap input[type="text"]:not(.eop-no-style),
+.eop_wrap input[type="number"]:not(.eop-no-style),
+.eop_wrap input[type="email"]:not(.eop-no-style),
+.eop_wrap input[type="url"]:not(.eop-no-style),
+.eop_wrap input[type="password"]:not(.eop-no-style) {
+    height: 36px;
+    padding: 0 12px;
+    border-radius: 8px;
+    border: 1px solid var(--eop-line);
+    background: var(--eop-surf);
+    font-size: 13px;
+    color: var(--eop-ink);
+    box-shadow: none;
+    font-family: var(--eop-font);
+    min-width: 0;
+}
+.eop_wrap input:not([type="checkbox"]):not([type="radio"]):hover { border-color: var(--eop-brand); }
+.eop_wrap input:not([type="checkbox"]):not([type="radio"]):focus {
+    border-color: var(--eop-brand);
+    box-shadow: var(--eop-shadow-focus);
+    outline: none;
+}
+.eop_wrap textarea {
+    border-radius: 8px;
+    border: 1px solid var(--eop-line);
+    background: var(--eop-surf);
+    color: var(--eop-ink);
+    padding: 10px 12px;
+    font-size: 13px;
+    box-shadow: none;
+    font-family: var(--eop-font);
+    width: 100%;
+    min-height: 80px;
+}
+.eop_wrap textarea:focus {
+    border-color: var(--eop-brand);
+    box-shadow: var(--eop-shadow-focus);
+    outline: none;
+}
+
+/* Select — styled with custom chevron, native dropdown only on click. */
+.eop_wrap select {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 36px;
+    padding: 0 36px 0 12px;
+    border-radius: 8px;
+    border: 1px solid var(--eop-line);
+    background: var(--eop-surf) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>") no-repeat right 12px center;
+    background-size: 12px;
+    font-size: 13px;
+    color: var(--eop-ink);
+    box-shadow: none;
+    font-family: var(--eop-font);
+    cursor: pointer;
+    min-width: 220px;
+}
+.eop_wrap select:hover {
+    border-color: var(--eop-brand);
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%235b4ed9' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+}
+.eop_wrap select:focus {
+    border-color: var(--eop-brand);
+    box-shadow: var(--eop-shadow-focus);
+    outline: none;
+}
+
+/* Sub-field containers (slide-down panels under the master switch). */
+.eop_wrap .cachefield,
+.eop_wrap .delayjsfield,
+.eop_wrap .unusedcssfield,
+.eop_wrap .imgoptfield,
+.eop_wrap .lcppreloadfield,
+.eop_wrap .adddimsfield,
+.eop_wrap .cffield,
+.eop_wrap .instantfield,
+.eop_wrap .lazyfield,
+.eop_wrap .easyopt-snapshot-fields,
+.eop_wrap .easyopt-cron-fields {
+    margin-top: 10px;
+}
+
+/* ── 7. Popup grid (Optimization "Edit list" sets) ───────────────────── */
+/* CRITICAL: forces 3/4-up layout. Inner cards have title above button, no
+   description in the card (description is shown in the modal). */
+.eop_wrap .easyopt-popup-grid {
+    display: grid !important;
+    gap: 10px;
+    margin: 12px 0 4px;
+    grid-template-columns: repeat(3, 1fr);
+}
+.eop_wrap .easyopt-popup-grid--2 { grid-template-columns: repeat(2, 1fr) !important; }
+.eop_wrap .easyopt-popup-grid--3 { grid-template-columns: repeat(3, 1fr) !important; }
+.eop_wrap .easyopt-popup-grid--4 { grid-template-columns: repeat(4, 1fr) !important; }
+
+.eop_wrap .easyopt-popup-grid > .easyopt-field-row,
+.eop_wrap .easyopt-popup-grid > .easyopt-field-row--compact {
+    display: flex !important;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 14px;
+    border: 1px solid var(--eop-line);
+    border-radius: 8px;
+    background: var(--eop-page);
+    margin: 0;
+}
+.eop_wrap .easyopt-popup-grid > .easyopt-field-row > label,
+.eop_wrap .easyopt-popup-grid > .easyopt-field-row--compact > label {
+    display: block !important;
+    margin: 0;
+}
+.eop_wrap .easyopt-popup-grid > .easyopt-field-row > label > strong,
+.eop_wrap .easyopt-popup-grid > .easyopt-field-row--compact > label > strong {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--eop-ink);
+    grid-column: auto;
+    grid-row: auto;
+    line-height: 1.3;
+}
+.eop_wrap .easyopt-popup-grid > .easyopt-field-row > .easyopt-popup-field,
+.eop_wrap .easyopt-popup-grid > .easyopt-field-row--compact > .easyopt-popup-field {
+    margin-top: 0;
+    grid-column: auto;
+    width: 100%;
+}
+.eop_wrap .easyopt-popup-grid .easyopt-popup-open {
+    width: 100%;
+    justify-content: center;
+}
+@media (max-width: 1180px) {
+    .eop_wrap .easyopt-popup-grid--3,
+    .eop_wrap .easyopt-popup-grid--4 { grid-template-columns: repeat(2, 1fr) !important; }
+}
+@media (max-width: 700px) {
+    .eop_wrap .easyopt-popup-grid,
+    .eop_wrap .easyopt-popup-grid--2,
+    .eop_wrap .easyopt-popup-grid--3,
+    .eop_wrap .easyopt-popup-grid--4 { grid-template-columns: 1fr !important; }
+}
+
+/* ── 8. Buttons (universal — covers WP-core .button classes too) ─────── */
+.eop_wrap .eop-btn,
+.eop_wrap .button,
+.eop_wrap .button-secondary,
+.eop_wrap .button-primary,
+.eop_wrap input[type="submit"].button,
+.eop_wrap input[type="submit"].button-primary,
+.eop_wrap #submit {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 9px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    border-radius: 8px;
+    border: 1px solid var(--eop-line);
+    background: var(--eop-surf);
+    color: var(--eop-ink);
+    white-space: nowrap;
+    text-decoration: none;
+    transition: background var(--eop-transition), border-color var(--eop-transition), color var(--eop-transition);
+    cursor: pointer;
+    line-height: 1.2;
+    box-shadow: none;
+    text-shadow: none;
+    height: auto;
+    min-height: 36px;
+    font-family: var(--eop-font);
+}
+.eop_wrap .button:hover,
+.eop_wrap .button-secondary:hover {
+    background: var(--eop-line-soft);
+    color: var(--eop-ink);
+    border-color: var(--eop-line);
+}
+.eop_wrap .eop-btn--sm  { padding: 6px 12px; font-size: 12px; min-height: 30px; }
+.eop_wrap .eop-btn--lg  { padding: 11px 22px; font-size: 14px; }
+.eop_wrap .eop-btn--full { width: 100%; margin-bottom: 8px; }
+.eop_wrap .eop-btn--primary,
+.eop_wrap .button-primary,
+.eop_wrap input[type="submit"].button-primary,
+.eop_wrap #submit {
+    background: var(--eop-brand);
+    color: var(--eop-brand-fg);
+    border-color: var(--eop-brand);
+}
+.eop_wrap .eop-btn--primary:hover,
+.eop_wrap .button-primary:hover,
+.eop_wrap input[type="submit"].button-primary:hover,
+.eop_wrap #submit:hover {
+    background: var(--eop-brand-deep);
+    border-color: var(--eop-brand-deep);
+    color: var(--eop-brand-fg);
+}
+.eop_wrap .eop-btn--soft { background: var(--eop-brand-soft); color: var(--eop-brand); border-color: transparent; }
+.eop_wrap .eop-btn--soft:hover { background: var(--eop-brand-soft); filter: brightness(.97); color: var(--eop-brand); }
+.eop_wrap .eop-btn--ghost { background: var(--eop-surf); color: var(--eop-ink); border: 1px solid var(--eop-line); }
+.eop_wrap .eop-btn--ghost:hover { background: var(--eop-line-soft); color: var(--eop-ink); }
+.eop_wrap .eop-btn--safe-on { background: var(--eop-warn-soft); color: var(--eop-warn-fg); border: 1px solid var(--eop-warn); font-weight: 600; }
+.eop_wrap .eop-btn--safe-on:hover { background: #fde9bf; }
+.eop_wrap .eop-btn--danger-ghost { background: var(--eop-surf); color: var(--eop-bad); border: 1px solid var(--eop-line); }
+.eop_wrap .eop-btn--danger-ghost:hover { background: var(--eop-bad-soft); border-color: var(--eop-bad); }
+
+.eop-btn .eop-icon, .eop_wrap .button .eop-icon { width: 14px; height: 14px; }
+.eop_wrap .eop-btn-icon { display: inline-flex; }
+.eop_wrap .eop-btn-icon svg { width: 14px; height: 14px; }
+.eop_wrap .eop-btn-spinner {
+    display: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    animation: eop-spin .7s linear infinite;
+}
+.eop_wrap .eop-btn.is-loading .eop-btn-spinner { display: inline-block; }
+.eop_wrap .eop-btn.is-loading .eop-btn-icon { display: none; }
+@keyframes eop-spin { to { transform: rotate(360deg); } }
+
+/* "Edit list (X entries)" — visual treatment for popup-open buttons.
+   These get the soft-indigo treatment to stand out from regular ghost
+   buttons; matches the demo's accent button look. */
+.eop_wrap .easyopt-popup-field { display: block; }
+.eop_wrap .easyopt-popup-open {
+    background: var(--eop-brand-soft) !important;
+    color: var(--eop-brand) !important;
+    border-color: transparent !important;
+}
+.eop_wrap .easyopt-popup-open:hover {
+    background: var(--eop-brand-soft) !important;
+    color: var(--eop-brand-deep) !important;
+    filter: brightness(.96);
+}
+
+/* Sign-up CTA on the Image CDN tab — primary indigo button. */
+.eop_wrap .eop-cta { background: var(--eop-brand) !important; color: #fff !important; border-color: var(--eop-brand) !important; padding: 10px 18px !important; }
+.eop_wrap .eop-cta:hover { background: var(--eop-brand-deep) !important; border-color: var(--eop-brand-deep) !important; color: #fff !important; }
+
+/* ── 9. Pills, badges, switches (display-only) ──────────────────────── */
+.eop-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: .1px;
+    white-space: nowrap;
+}
+.eop-pill--ok      { background: var(--eop-ok-soft);    color: var(--eop-ok-fg); }
+.eop-pill--warn    { background: var(--eop-warn-soft);  color: var(--eop-warn-fg); }
+.eop-pill--brand   { background: var(--eop-brand-soft); color: var(--eop-brand); }
+.eop-pill--neutral { background: var(--eop-line-soft);  color: var(--eop-sub); }
+.eop-pill__dot { width: 5px; height: 5px; border-radius: 3px; background: currentColor; }
+.eop-pill--ok .eop-pill__dot { background: var(--eop-ok); }
+
+.eop-switch {
+    display: inline-block;
+    width: 32px;
+    height: 18px;
+    position: relative;
+    flex-shrink: 0;
+}
+.eop-switch input {
+    position: absolute;
+    opacity: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    cursor: pointer;
+}
+.eop-switch > span {
+    position: absolute;
+    inset: 0;
+    border-radius: 9999px;
+    background: #cbd5e1;
+    transition: background var(--eop-transition);
+    display: block;
+}
+.eop-switch > span::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(0,0,0,.2);
+    transition: left var(--eop-transition);
+}
+.eop-switch input:checked + span { background: var(--eop-brand); }
+.eop-switch input:checked + span::after { left: 16px; }
+
+.eop-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-size: 11.5px;
+    font-weight: 600;
+}
+.eop-badge-success { background: var(--eop-ok-soft);    color: var(--eop-ok-fg); }
+.eop-badge-info    { background: var(--eop-brand-soft); color: var(--eop-brand); }
+.eop-badge-muted   { background: var(--eop-line-soft);  color: var(--eop-sub); }
+
+.eop-icon { width: 16px; height: 16px; vertical-align: middle; }
+.eop-icon--sm { width: 12px; height: 12px; }
+
+.eop-action-status {
+    margin-top: 12px;
+    padding: 12px 14px;
+    background: var(--eop-page);
+    border-radius: 8px;
+    font-size: 12.5px;
+    color: var(--eop-sub);
+    line-height: 1.5;
+}
+
+/* ── 10. Empty / button-only field rows ──────────────────────────────── */
+.eop_wrap .easyopt-field-row:has(> button) {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+    padding: 14px 0;
+    border: 0;
+}
+
+/* DB cleanup task list — the parent .easyopt-field-row wraps stacked rows */
+.eop_wrap .easyopt-field-row:has(> .easyopt-db-row) {
+    display: block;
+    padding: 8px 0;
+    border: 0;
+}
+.eop_wrap .easyopt-db-row {
+    display: flex !important;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 0 !important;
+    border-bottom: 1px solid var(--eop-line-soft) !important;
+}
+.eop_wrap .easyopt-db-row:last-child { border-bottom: 0 !important; }
+.eop_wrap .easyopt-db-row label {
+    display: inline-flex !important;
+    align-items: center;
+    gap: 10px;
+    font-weight: 500 !important;
+    margin: 0 !important;
+}
+.eop_wrap .easyopt-db-row label > input[type="checkbox"] {
+    width: 32px;
+    height: 18px;
+}
+.eop_wrap .easyopt-db-row label > input[type="checkbox"]::after {
+    width: 14px;
+    height: 14px;
+}
+.eop_wrap .easyopt-db-row label > input[type="checkbox"]:checked::after {
+    left: 16px;
+}
+.eop_wrap .easyopt-db-row .description {
+    margin-left: 42px !important;
+    font-size: 12.5px;
+}
+.eop_wrap .easyopt-db-count {
+    margin-left: 14px;
+    font-size: 12px;
+    background: var(--eop-page);
+    padding: 3px 10px;
+    border-radius: 999px;
+    color: var(--eop-sub);
+    font-variant-numeric: tabular-nums;
+}
+
+/* ── 11. Cache-disabled empty prompt ─────────────────────────────────── */
+.eop_wrap .eop-cache-disabled-prompt {
+    margin: 16px 0 8px;
+    padding: 26px 22px;
+    background: var(--eop-page);
+    border: 1px dashed var(--eop-line);
+    border-radius: var(--eop-r);
+    text-align: center;
+}
+.eop_wrap .eop-prompt-icon {
+    font-size: 28px;
+    line-height: 1;
+    margin-bottom: 8px;
+}
+.eop_wrap .eop-cache-disabled-prompt h3 {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--eop-ink);
+    margin: 0 0 6px;
+}
+.eop_wrap .eop-cache-disabled-prompt p {
+    font-size: 13px;
+    color: var(--eop-sub);
+    margin: 0;
+    max-width: 540px;
+    margin-inline: auto;
+    line-height: 1.55;
+}
+
+/* ── 12. Image CDN "How it works" callout ───────────────────────────── */
+/* Soft indigo info card with a primary CTA at the bottom. */
+.eop_wrap .eop-callout {
+    background: var(--eop-brand-soft-2);
+    border: 1px solid var(--eop-brand-soft);
+    border-radius: var(--eop-r);
+    padding: 18px 20px;
+    margin: 6px 0 18px;
+}
+.eop_wrap .eop-callout h3 {
+    margin: 0 0 8px;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--eop-brand);
+    letter-spacing: .2px;
+    font-family: var(--eop-font);
+}
+.eop_wrap .eop-callout p {
+    margin: 0 0 10px;
+    font-size: 13px;
+    color: var(--eop-sub);
+    line-height: 1.55;
+}
+.eop_wrap .eop-callout ol {
+    margin: 0 0 14px 20px;
+    padding: 0;
+    font-size: 13px;
+    color: var(--eop-sub);
+    line-height: 1.6;
+}
+.eop_wrap .eop-callout ol li { margin: 2px 0; }
+.eop_wrap .eop-callout > p:last-child { margin-bottom: 0; }
+
+/* ── 13. DB snapshot table ───────────────────────────────────────────── */
+.eop_wrap #easyopt_db_snapshots_list { margin-top: 10px; }
+.eop_wrap #easyopt_db_snapshots_list table.widefat {
+    border: 1px solid var(--eop-line);
+    border-radius: var(--eop-r-sm);
+    overflow: hidden;
+    background: var(--eop-surf);
+    box-shadow: none;
+    margin-top: 8px;
+    border-collapse: separate;
+    border-spacing: 0;
+    width: 100%;
+}
+.eop_wrap #easyopt_db_snapshots_list table thead th {
+    background: var(--eop-page);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--eop-sub);
+    letter-spacing: .2px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--eop-line);
+    text-align: left;
+}
+.eop_wrap #easyopt_db_snapshots_list table tbody td {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--eop-line-soft);
+    font-size: 13px;
+    color: var(--eop-ink);
+    background: var(--eop-surf);
+}
+.eop_wrap #easyopt_db_snapshots_list table tbody tr:last-child td { border-bottom: 0; }
+.eop_wrap #easyopt_db_snapshots_list table tbody td code {
+    background: var(--eop-brand-soft);
+    color: var(--eop-brand);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-family: ui-monospace, Menlo, monospace;
+}
+.eop_wrap .eop-snap-restore,
+.eop_wrap .eop-snap-delete {
+    padding: 6px 12px !important;
+    font-size: 12px !important;
+    min-height: 30px !important;
+    margin-right: 4px;
+}
+.eop_wrap .eop-snap-restore {
+    background: var(--eop-brand-soft) !important;
+    color: var(--eop-brand) !important;
+    border-color: transparent !important;
+}
+.eop_wrap .eop-snap-restore:hover {
+    background: var(--eop-brand) !important;
+    color: #fff !important;
+}
+.eop_wrap .eop-snap-delete {
+    background: var(--eop-surf) !important;
+    color: var(--eop-bad) !important;
+    border-color: var(--eop-line) !important;
+}
+.eop_wrap .eop-snap-delete:hover {
+    background: var(--eop-bad-soft) !important;
+    color: var(--eop-bad) !important;
+    border-color: var(--eop-bad) !important;
+}
+
+/* WP form-table — kill its default vertical padding / heading style inside snapshot section */
+.eop_wrap table.form-table { margin-top: 6px; }
+.eop_wrap table.form-table th {
+    padding: 12px 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--eop-ink);
+    width: 220px;
+}
+.eop_wrap table.form-table td { padding: 12px 0; }
+.eop_wrap table.form-table td input[type="number"] { width: 110px !important; }
+
+/* ── 14. Popup modal (renders OUTSIDE .eop_wrap) ─────────────────────── */
+.easyopt-popup-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15,23,42,.55);
+    z-index: 100050;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    font-family: var(--eop-font);
+}
+.easyopt-popup-overlay[hidden] { display: none !important; }
+.easyopt-popup {
+    background: var(--eop-surf);
+    border-radius: var(--eop-r);
+    box-shadow: var(--eop-shadow-lg);
+    width: min(640px, 100%);
+    max-height: calc(100vh - 80px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    color: var(--eop-ink);
+}
+.easyopt-popup-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--eop-line);
+}
+.easyopt-popup-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--eop-ink);
+    margin: 0;
+    letter-spacing: -.005em;
+    font-family: var(--eop-font);
+}
+.easyopt-popup-close {
+    background: transparent;
+    border: 0;
+    font-size: 22px;
+    line-height: 1;
+    color: var(--eop-mute);
+    padding: 4px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+.easyopt-popup-close:hover { background: var(--eop-line-soft); color: var(--eop-ink); }
+.easyopt-popup-body {
+    padding: 18px 20px;
+    overflow-y: auto;
+    flex: 1;
+}
+.easyopt-popup-help {
+    font-size: 13px;
+    color: var(--eop-sub);
+    margin: 0 0 10px;
+    line-height: 1.55;
+}
+.easyopt-popup-body textarea {
+    width: 100%;
+    min-height: 280px;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 12.5px;
+    line-height: 1.5;
+    border-radius: 8px;
+    border: 1px solid var(--eop-line);
+    padding: 10px 12px;
+    background: var(--eop-surf);
+    color: var(--eop-ink);
+    box-shadow: none;
+    resize: vertical;
+}
+.easyopt-popup-body textarea:focus {
+    border-color: var(--eop-brand);
+    box-shadow: var(--eop-shadow-focus);
+    outline: none;
+}
+.easyopt-popup-footer {
+    padding: 14px 20px;
+    border-top: 1px solid var(--eop-line);
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+/* Modal buttons — match the indigo system */
+.easyopt-popup-footer .button,
+.easyopt-popup-footer .button-primary,
+.easyopt-popup-footer .button-secondary {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    border-radius: 8px;
+    border: 1px solid var(--eop-line);
+    background: var(--eop-surf);
+    color: var(--eop-ink);
+    cursor: pointer;
+    box-shadow: none;
+    text-shadow: none;
+    height: auto;
+    min-height: 36px;
+    line-height: 1.2;
+    font-family: var(--eop-font);
+}
+.easyopt-popup-footer .button-primary,
+.easyopt-popup-footer .easyopt-popup-save {
+    background: var(--eop-brand);
+    border-color: var(--eop-brand);
+    color: #fff;
+}
+.easyopt-popup-footer .button-primary:hover,
+.easyopt-popup-footer .easyopt-popup-save:hover {
+    background: var(--eop-brand-deep);
+    border-color: var(--eop-brand-deep);
+    color: #fff;
+}
+.easyopt-popup-footer .button-secondary:hover,
+.easyopt-popup-footer .easyopt-popup-cancel:hover {
+    background: var(--eop-line-soft);
+}
+
+/* ── 15. WP-admin overrides + responsive ─────────────────────────────── */
+.eop_wrap h1, .eop_wrap h2, .eop_wrap h3, .eop_wrap h4 {
+    font-weight: 700;
+    font-family: var(--eop-font);
+}
+.eop_wrap fieldset { border: 0; padding: 0; margin: 0; }
+.eop_wrap legend { padding: 0; }
+.folded .eop_wrap { margin-left: 0; }
+
+/* Responsive */
+@media (max-width: 900px) {
+    .eop-app { grid-template-columns: 1fr; }
+    .eop-sidebar {
+        border-right: 0;
+        border-bottom: 1px solid var(--eop-line);
+        padding: 14px 0;
+    }
+    .eop-brand { padding: 0 18px 12px; margin-bottom: 10px; }
+    .eop-nav { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 14px; }
+    .eop-nav__group { margin-bottom: 0; display: contents; }
+    .eop-nav__group-label { display: none; }
+    /* (2.6.5) …but NOT the collapsible group's toggle. Hiding it here would
+       leave the closed "Advanced" group with no way to open it and its five
+       items unreachable on small screens. Reset the vertical margins the pill
+       carries in the column layout and let it sit inline among the wrapped
+       nav items; the border/fill/chevron from the base rule carry over. */
+    .eop_wrap .eop-nav__group-toggle {
+        display: inline-flex;
+        width: auto;
+        flex: 0 0 auto;
+        margin: 0;
+        padding: 7px 12px;
+    }
+    /* (2.5.1) Sidebar items are width:100% with a stretching label span —
+       fine in a column, ugly when flex-wrapped. On small screens render
+       them as compact pills that wrap evenly. */
+    .eop-nav__item,
+    .eop_wrap .eop-tab.eop-nav__item {
+        width: auto;
+        flex: 0 0 auto;
+        margin-bottom: 0;
+        padding: 7px 12px;
+        border: 1px solid var(--eop-line-soft);
+        border-radius: 20px;
+        gap: 7px;
+    }
+    .eop-nav__item span { flex: 0 0 auto; }
+    .eop-nav__item.active::after,
+    .eop_wrap .eop-tab.eop-nav__item.active::after {
+        display: none; /* the trailing dot relies on margin-left:auto and
+                          would stretch the pill */
+    }
+    .eop-nav__item.active,
+    .eop_wrap .eop-tab.eop-nav__item.active {
+        border-color: var(--eop-brand);
+    }
+    .eop-sidebar__help { display: none; }
+    .eop-grid-2 { grid-template-columns: 1fr; }
+    .eop-kpi-strip { grid-template-columns: 1fr; }
+    .eop-topbar { padding: 0 16px; height: auto; flex-wrap: wrap; gap: 8px; padding-block: 10px; }
+    .eop-content { padding: 18px 16px 40px; }
+    .eop_wrap .easyopt-row { grid-template-columns: 1fr; }
+}
+
+@media print {
+    .eop-sidebar, .eop-topbar { display: none; }
+}
+
+/* ── 1.7.0 — Dashboard module-status double-toggle fix ─────────────────────
+   Pre-1.7.0 the read-only toggle in the dashboard rendered both the native
+   checkbox (with WP-core's blue checkmark from common.css) AND our pill,
+   producing a visible double element. We already suppress the native
+   checkmark globally, but on the dashboard's `.eop-switch--readonly`
+   variant the `<input disabled>` was still painting its own background
+   on some themes / WP versions. Lock the readonly variant down hard:
+   absolutely zero visual contribution from the input element. */
+.eop-switch--readonly input,
+.eop-switch--readonly input[disabled] {
+    -webkit-appearance: none !important;
+    -moz-appearance: none !important;
+    appearance: none !important;
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    width: 100% !important;
+    height: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    outline: 0 !important;
+    /* Disabled inputs ignore pointer events anyway, but be explicit. */
+    pointer-events: none;
+}
+.eop-switch--readonly input::before,
+.eop-switch--readonly input::after,
+.eop-switch--readonly input:checked::before,
+.eop-switch--readonly input:checked::after {
+    content: none !important;
+    display: none !important;
+}
+
+/* ── 1.7.0 — Sticky save bar ───────────────────────────────────────────────
+   Bottom-center floating bar. Slides in when there are unsaved changes,
+   slides out when there aren't. Position fixed so it survives tab
+   switches and scroll. Z-index above modals but below WP admin menus
+   so an open menu still wins. */
+.eop-savebar {
+    position: fixed;
+    left: 50%;
+    bottom: -80px; /* hidden by default */
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding: 12px 16px 12px 20px;
+    background: #0f172a;
+    color: #f8fafc;
+    border-radius: 12px;
+    box-shadow: 0 18px 40px rgba(15, 23, 42, .25), 0 4px 12px rgba(15, 23, 42, .15);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 13.5px;
+    z-index: 99998; /* below #wpadminbar (99999) */
+    transition: bottom .25s cubic-bezier(.16, 1, .3, 1), opacity .2s ease;
+    opacity: 0;
+    pointer-events: none;
+    max-width: calc(100vw - 32px);
+}
+.eop-savebar--visible {
+    bottom: 24px;
+    opacity: 1;
+    pointer-events: auto;
+}
+.eop-savebar__dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #f59e0b; /* amber — drawing attention */
+    box-shadow: 0 0 0 4px rgba(245, 158, 11, .18);
+    flex-shrink: 0;
+}
+.eop-savebar__label { color: #cbd5e1; }
+.eop-savebar__label strong { color: #fff; font-weight: 600; padding: 0 2px; }
+.eop-savebar__discard,
+.eop-savebar__save {
+    appearance: none;
+    border: 0;
+    font: inherit;
+    cursor: pointer;
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-weight: 600;
+    transition: background .15s ease, transform .05s ease;
+}
+.eop-savebar__discard {
+    background: transparent;
+    color: #cbd5e1;
+}
+.eop-savebar__discard:hover {
+    color: #fff;
+}
+.eop-savebar__save {
+    background: #6366f1;
+    color: #fff;
+}
+.eop-savebar__save:hover:not(:disabled) {
+    background: #4f46e5;
+}
+.eop-savebar__save:active:not(:disabled) {
+    transform: translateY(1px);
+}
+.eop-savebar__save:disabled {
+    opacity: .65;
+    cursor: progress;
+}
+.eop-savebar__save--busy {
+    /* The button shows a soft pulse instead of a spinner to keep the
+       layout exactly the same width during save. */
+    animation: eop-savebar-pulse 1.1s ease-in-out infinite;
+}
+@keyframes eop-savebar-pulse {
+    0%, 100% { background: #6366f1; }
+    50%      { background: #4f46e5; }
+}
+
+/* ── 1.7.0 — Save / discard toast ───────────────────────────────────────── */
+.eop-toast {
+    position: fixed;
+    left: 50%;
+    bottom: -60px;
+    transform: translateX(-50%);
+    padding: 10px 18px;
+    background: #0f172a;
+    color: #f8fafc;
+    border-radius: 999px;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    box-shadow: 0 12px 32px rgba(15, 23, 42, .25);
+    z-index: 99997;
+    opacity: 0;
+    pointer-events: none;
+    transition: bottom .25s cubic-bezier(.16, 1, .3, 1), opacity .2s ease;
+    white-space: nowrap;
+    max-width: calc(100vw - 32px);
+}
+.eop-toast--visible {
+    bottom: 24px;
+    opacity: 1;
+}
+/* Lift the toast above where the save bar would sit if the save bar
+   is also visible (it shouldn't be — toast appears after save bar is
+   already hiding — but defensive). */
+.eop-savebar--visible ~ .eop-toast--visible {
+    bottom: 88px;
+}
+.eop-toast--ok    { background: #047857; }
+.eop-toast--error { background: #b91c1c; }
+.eop-toast--muted { background: #334155; }
+
+@media (max-width: 600px) {
+    .eop-savebar { gap: 10px; padding: 10px 12px; font-size: 12.5px; }
+    .eop-savebar__discard,
+    .eop-savebar__save { padding: 6px 12px; }
+}
+
+/* ═══════════════════════════════════════════════════
+   Easy Optimizer 2.1.0 — New component styles
+   ═══════════════════════════════════════════════════ */
+
+/* ── Sub-tabs ── */
+.eop-subtabs{display:flex;gap:4px;border-bottom:2px solid var(--eop-border-soft,#e5e7eb);padding-bottom:0;margin-bottom:0;flex-wrap:wrap}
+.eop-subtab{display:inline-flex;align-items:center;gap:6px;padding:10px 18px;font-size:13px;font-weight:500;color:var(--eop-text-muted,#6b7280);background:none;border:none;border-bottom:2px solid transparent;margin-bottom:-2px;cursor:pointer;border-radius:6px 6px 0 0;transition:all .15s ease}
+.eop-subtab:hover{color:var(--eop-text,#1f2937);background:var(--eop-bg-tab,#f3f4f6)}
+.eop-subtab--active{color:var(--eop-brand,#6d28d9);border-bottom-color:var(--eop-brand,#6d28d9);font-weight:600}
+.eop-subtab--active:hover{color:var(--eop-brand,#6d28d9)}
+.eop-subtab .eop-icon--sm{width:15px;height:15px;opacity:.7}
+.eop-subtab--active .eop-icon--sm{opacity:1}
+
+/* ── Collapsible help ── */
+.eop-collapsible{margin:10px 0;border-radius:8px;border:1px solid var(--eop-border-soft,#e5e7eb);overflow:hidden}
+.eop-collapsible__toggle{display:flex;align-items:center;gap:8px;width:100%;padding:10px 14px;font-size:13px;font-weight:500;color:var(--eop-brand,#6d28d9);background:var(--eop-bg-tab,#f9fafb);border:none;cursor:pointer;text-align:left;transition:background .15s}
+.eop-collapsible__toggle:hover{background:var(--eop-bg-hover,#f3f4f6)}
+.eop-collapsible__body{padding:12px 16px 14px;font-size:13px;line-height:1.65;color:var(--eop-text-muted,#4b5563);border-top:1px solid var(--eop-border-soft,#e5e7eb);background:#fff}
+.eop-collapsible__body p{margin:0 0 8px}
+.eop-collapsible__body p:last-child{margin-bottom:0}
+.eop-collapsible__body ul{margin:6px 0;padding-left:20px}
+.eop-collapsible__body li{margin-bottom:4px}
+.eop-icon--xs{width:12px;height:12px}
+
+/* ── Dependency warning ── */
+.eop-dep-warning{display:flex;align-items:flex-start;gap:10px;padding:12px 16px;margin:10px 0;background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;font-size:13px;color:#92400e;line-height:1.5}
+.eop-dep-warning .eop-icon--sm{flex-shrink:0;margin-top:1px;color:#d97706}
+.eop-dep-warning__link{background:none;border:none;color:var(--eop-brand,#6d28d9);text-decoration:underline;cursor:pointer;font-size:13px;padding:0;margin-left:4px;white-space:nowrap}
+
+/* ==========================================================================
+   First-run Setup Wizard (2.3.0)
+   ========================================================================== */
+.eop-wiz {
+    --eop-brand:      #5b4ed9;
+    --eop-brand-2:    #7a6cf0;
+    --eop-brand-deep: #4a3fc4;
+    --eop-ink:        #0f172a;
+    --eop-sub:        #475569;
+    --eop-mute:       #94a3b8;
+    --eop-line:       #e6e8ee;
+    --eop-ok:         #10b981;
+    --eop-font:       "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-family: var(--eop-font);
+    color: var(--eop-ink);
+    margin: 16px 20px 40px 0;
+    -webkit-font-smoothing: antialiased;
+}
+.eop-wiz *, .eop-wiz *::before, .eop-wiz *::after { box-sizing: border-box; }
+
+.eop-wiz__shell {
+    position: relative;
+    max-width: 1040px;
+    margin: 0 auto;
+    background: #fff;
+    border: 1px solid var(--eop-line);
+    border-radius: 16px;
+    box-shadow: 0 12px 40px rgba(15,23,42,.06);
+    padding: 36px 36px 30px;
+}
+.eop-wiz__skip {
+    position: absolute;
+    top: 18px;
+    right: 20px;
+    background: none;
+    border: 0;
+    color: var(--eop-mute);
+    font-size: 13px;
+    cursor: pointer;
+    text-decoration: underline;
+    padding: 4px 6px;
+}
+.eop-wiz__skip:hover { color: var(--eop-sub); }
+.eop-wiz__skip:disabled { opacity: .5; cursor: default; }
+
+.eop-wiz__head { text-align: center; margin-bottom: 26px; }
+.eop-wiz__mark {
+    width: 48px; height: 48px;
+    margin: 0 auto 14px;
+    border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff;
+    background: linear-gradient(135deg, var(--eop-brand), var(--eop-brand-2));
+    box-shadow: 0 8px 20px rgba(91,78,217,.35);
+}
+.eop-wiz__title { font-size: 24px; font-weight: 700; margin: 0 0 8px; color: var(--eop-ink); }
+.eop-wiz__sub { font-size: 14px; color: var(--eop-sub); margin: 0 auto; max-width: 620px; line-height: 1.6; }
+
+.eop-wiz__cards {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-bottom: 22px;
+}
+@media (max-width: 860px) { .eop-wiz__cards { grid-template-columns: 1fr; } }
+
+.eop-wiz-card {
+    position: relative;
+    text-align: left;
+    background: #fff;
+    border: 2px solid var(--eop-line);
+    border-radius: 14px;
+    padding: 18px 18px 16px;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
+    font: inherit;
+    color: inherit;
+}
+.eop-wiz-card:hover { border-color: var(--eop-brand-2); transform: translateY(-2px); }
+.eop-wiz-card.is-selected {
+    border-color: var(--eop-brand);
+    box-shadow: 0 0 0 3px rgba(91,78,217,.16);
+}
+.eop-wiz-card__radio {
+    position: absolute;
+    top: 16px; right: 16px;
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    border: 2px solid var(--eop-line);
+    display: flex; align-items: center; justify-content: center;
+    color: #fff;
+}
+.eop-wiz-card.is-selected .eop-wiz-card__radio { background: var(--eop-brand); border-color: var(--eop-brand); }
+.eop-wiz-badge {
+    position: absolute;
+    top: -11px; left: 18px;
+    background: var(--eop-brand);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .3px;
+    padding: 3px 10px;
+    border-radius: 999px;
+}
+.eop-wiz-card__name { font-size: 17px; font-weight: 700; margin-bottom: 2px; }
+.eop-wiz-card__tag { font-size: 12px; font-weight: 600; color: var(--eop-brand); text-transform: uppercase; letter-spacing: .4px; margin-bottom: 10px; }
+.eop-wiz-card__desc { font-size: 13px; color: var(--eop-sub); line-height: 1.55; margin-bottom: 12px; }
+.eop-wiz-card__list { list-style: none; margin: auto 0 0; padding: 0; }
+.eop-wiz-card__list li {
+    display: flex; align-items: flex-start; gap: 8px;
+    font-size: 12.5px; color: var(--eop-ink);
+    padding: 4px 0;
+    line-height: 1.45;
+}
+.eop-wiz-tick { color: var(--eop-ok); flex-shrink: 0; margin-top: 1px; }
+
+.eop-wiz__consent {
+    border: 1px solid var(--eop-line);
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-bottom: 22px;
+    background: #f9fafc;
+}
+.eop-wiz__consent-row { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 600; cursor: pointer; }
+.eop-wiz__consent-row input { width: 16px; height: 16px; }
+.eop-wiz__whats {
+    background: none; border: 0; color: var(--eop-brand);
+    font-size: 13px; cursor: pointer; text-decoration: underline; padding: 0; margin-left: 2px; font-weight: 500;
+}
+.eop-wiz__info { margin-top: 10px; font-size: 12.5px; color: var(--eop-sub); line-height: 1.6; }
+.eop-wiz__info p { margin: 0 0 8px; }
+.eop-wiz__info p:last-child { margin-bottom: 0; }
+.eop-wiz__hl { background: rgba(91,78,217,.14); color: var(--eop-brand-deep); font-weight: 600; padding: 0 4px; border-radius: 4px; }
+
+.eop-wiz__foot { display: flex; align-items: center; gap: 16px; justify-content: center; }
+.eop-wiz__cta {
+    background: linear-gradient(135deg, var(--eop-brand), var(--eop-brand-2));
+    color: #fff;
+    border: 0;
+    border-radius: 10px;
+    padding: 12px 28px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 6px 16px rgba(91,78,217,.3);
+    transition: transform .15s ease, box-shadow .15s ease;
+}
+.eop-wiz__cta:hover { transform: translateY(-1px); box-shadow: 0 10px 22px rgba(91,78,217,.36); }
+.eop-wiz__cta:disabled { opacity: .65; cursor: default; transform: none; }
+.eop-wiz__foot-note { font-size: 13px; color: var(--eop-mute); }
+
+/* ── PageSpeed: loading spinner ── */
+.eop-spinner {
+    display: inline-block;
+    width: 14px; height: 14px;
+    border: 2px solid rgba(91,78,217,.25);
+    border-top-color: var(--eop-accent, #5b4ee8);
+    border-radius: 50%;
+    animation: eop-spin .7s linear infinite;
+    flex: none;
+}
+@keyframes eop-spin { to { transform: rotate(360deg); } }
+
+/* ── Settings: card sections (visually separate Speed Test / Uninstall) ── */
+.eop-settings-card {
+    padding: 18px 20px;
+    margin-bottom: 18px;
+    background: var(--eop-bg-alt, #fafafb);
+    border: 1px solid var(--eop-border, #e3e5e8);
+    border-radius: 12px;
+}
+.eop-settings-card h3 { font-size: 15px; }
+
+/* ── Results tables: contain wide tables, scroll instead of overflowing ── */
+.eop-table-scroll { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+/* ── Cloudways CTA row: compact, button on the right, text on the left ── */
+.eop-host-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-top: 16px;
+    padding: 12px 14px;
+    border: 1px solid var(--eop-border, #e3e5e8);
+    border-radius: 10px;
+    background: var(--eop-bg-alt, #fafafb);
+}
+.eop-host-row__text {
+    flex: 1;
+    min-width: 0;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--eop-text-soft, #4b5563);
+}
+.eop-host-row__text strong { color: var(--eop-accent, #5b4ee8); font-weight: 700; }
+.eop-host-cta {
+    position: relative;
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    white-space: nowrap;
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 700;
+    text-decoration: none;
+    color: #fff;
+    overflow: hidden;
+    background: linear-gradient(120deg, #4f3ff0 0%, #7c5cf6 100%);
+    box-shadow: 0 4px 12px rgba(79,63,240,.30);
+    transition: transform .15s ease, box-shadow .15s ease;
+}
+.eop-host-cta:hover { transform: translateY(-1px); box-shadow: 0 8px 18px rgba(79,63,240,.42); }
+.eop-host-cta:focus { outline: 2px solid var(--eop-accent, #5b4ee8); outline-offset: 2px; }
+.eop-host-cta__shine {
+    position: absolute; top: 0; left: -60%;
+    width: 45%; height: 100%;
+    background: linear-gradient(100deg, transparent, rgba(255,255,255,.5), transparent);
+    transform: skewX(-18deg);
+    animation: eop-cta-shine 3.6s ease-in-out infinite;
+    pointer-events: none;
+}
+@media (max-width: 600px) {
+    .eop-host-row { flex-direction: column; align-items: stretch; }
+    .eop-host-cta { justify-content: center; }
+}
+
+/* ── Setup wizard: pre-flight findings (2.6.0) ───────────────────────────
+   Rendered inline above the preset cards rather than as its own step — an
+   extra wizard screen costs completion rate, and this needs to cost nothing. */
+.eop-wiz__preflight {
+    margin: 0 0 18px;
+    padding: 14px 16px;
+    border: 1px solid var(--eop-border-soft, #e0e0e6);
+    border-left: 3px solid var(--eop-accent, #5b4ee8);
+    border-radius: 6px;
+    background: var(--eop-surface-soft, #fafaff);
+    text-align: left;
+}
+.eop-wiz__preflight-head {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin: 0 0 8px;
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--eop-text, #1d2327);
+}
+.eop-wiz__preflight-head svg { color: var(--eop-accent, #5b4ee8); flex: 0 0 auto; }
+.eop-wiz__preflight-list {
+    margin: 0;
+    padding: 0 0 0 20px;
+    list-style: disc;
+    font-size: 13px;
+    line-height: 1.65;
+    color: var(--eop-text-muted, #50575e);
+}
+.eop-wiz__preflight-list strong { color: var(--eop-text, #1d2327); }
+.eop-wiz__preflight-warn { color: var(--eop-warning, #996800); }
+.eop-wiz__preflight-foot {
+    margin: 9px 0 0;
+    font-size: 12px;
+    color: var(--eop-text-muted, #50575e);
+}
+/* (2.6.5) The deactivate helper line, in the brand colour. Earlier cuts made
+   it orange to read as a warning, but the point is a calm, reassuring action
+   ("Easy Optimizer will take over"), so brand purple fits better and matches
+   the button beneath it. */
+.eop-wiz__preflight-brand {
+    color: #5b4ed9;
+    font-weight: 500;
+}
+/* Per-plugin deactivate rows (variant B). The button sits INLINE right after
+   the sentence, not pinned to the far edge, so the action reads as part of the
+   thing it acts on. */
+.eop-wiz__preflight-plugins {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+.eop-wiz__pfrow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--eop-line-soft, #f0f2f6);
+    font-size: 13px;
+    line-height: 1.5;
+    flex-wrap: wrap;
+}
+.eop-wiz__pfrow:last-child { border-bottom: 0; }
+.eop-wiz__pfrow-text { color: var(--eop-text-muted, #50575e); }
+.eop-wiz__pfrow-text strong { color: var(--eop-text, #1d2327); }
+/* The deactivate action — a GHOST OUTLINE in a danger red, filling solid on
+   hover (prototype variant B, D's colour). Outlined at rest so it doesn't
+   out-shout the plugin name it acts on when several stack; the red says
+   "this switches something off", and the solid hover confirms intent. No
+   icon — the word carries it. */
+.eop-wiz__deact {
+    flex: 0 0 auto;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 5px 14px;
+    border-radius: 7px;
+    border: 1px solid #f1b6ae;
+    background: #fff;
+    color: #c0392b;
+    cursor: pointer;
+    transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+.eop-wiz__deact:hover:not(:disabled) {
+    background: #c0392b;
+    border-color: #c0392b;
+    color: #fff;
+}
+.eop-wiz__deact:disabled { opacity: .6; cursor: default; }
+@media (max-width: 600px) {
+    .eop-wiz__preflight { padding: 12px; }
+}
+
+/* ── FluxPress service bar (2.7.0) ────────────────────────────────────
+   Renders above every panel, on every tab. Variant J: cloud is an account
+   state that is true everywhere, not a place you visit — and a trial whose
+   countdown is only visible on one tab converts nobody.
+
+   Deliberately quiet. It sits ABOVE the panel rather than inside it, uses
+   the page ground rather than a filled bar, and only takes colour when the
+   trial is nearly over (amber) or has lapsed (red). A permanent coloured
+   strip across all thirteen tabs is exactly the nagging this shape avoids. */
+.eop_wrap .eop-svcbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 9px 14px;
+    margin-bottom: 14px;
+    font-size: 13px;
+    color: var(--eop-text-muted);
+    background: var(--eop-surf);
+    border: 1px solid var(--eop-line);
+    border-radius: 8px;
+}
+.eop_wrap .eop-svcbar strong { color: var(--eop-ink); font-weight: 600; }
+.eop_wrap .eop-svcbar__dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex: none;
+}
+.eop_wrap .eop-svcbar__plan {
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: var(--eop-line-soft);
+    color: var(--eop-text-muted);
+    font-size: 12px;
+}
+.eop_wrap .eop-svcbar__usage { color: var(--eop-text-soft); font-size: 12px; }
+.eop_wrap .eop-svcbar__warn  { color: var(--eop-warn-fg, #92400e); font-size: 12px; }
+.eop_wrap .eop-svcbar a {
+    color: var(--eop-text-muted);
+    text-decoration: none;
+    border-bottom: 1px solid var(--eop-line);
+}
+.eop_wrap .eop-svcbar a:hover { color: var(--eop-ink); border-bottom-color: currentColor; }
+
+/* Usage and the "serving from your own server" note are the first things
+   to go when there is no room — identity and the actions must survive. */
+@media (max-width: 782px) {
+    .eop_wrap .eop-svcbar__usage,
+    .eop_wrap .eop-svcbar__warn { display: none; }
+}
+
+/* ── FluxPress account screen (2.7.0) ─────────────────────────────────
+   The feature map: what runs where. Rows for capabilities that are not
+   built yet are dimmed rather than hidden — a customer deciding whether an
+   account is worth keeping should be able to see the whole shape of what it
+   covers, and hiding the unbuilt half would make the table read as the
+   finished product. */
+.eop_wrap .eop-flux-tbl {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--eop-surf);
+    border: 1px solid var(--eop-line);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-top: 10px;
+}
+.eop_wrap .eop-flux-tbl th {
+    text-align: left;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .4px;
+    color: var(--eop-text-soft);
+    font-weight: 600;
+    padding: 10px 14px;
+    background: var(--eop-bg-alt);
+    border-bottom: 1px solid var(--eop-line);
+}
+.eop_wrap .eop-flux-tbl td {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--eop-line-soft);
+    vertical-align: middle;
+    color: var(--eop-ink);
+}
+.eop_wrap .eop-flux-tbl tr:last-child td { border-bottom: 0; }
+.eop_wrap .eop-flux-tbl__sub { color: var(--eop-text-muted); font-size: 12px; }
+.eop_wrap .eop-flux-tbl tr.is-soon td { opacity: .55; }
+
+.eop_wrap .eop-flux-pill {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 9px;
+    border-radius: 999px;
+    white-space: nowrap;
+}
+.eop_wrap .eop-flux-pill--on   { background: var(--eop-ok-soft, #d1fae5); color: var(--eop-ok-fg, #047857); }
+.eop_wrap .eop-flux-pill--off  { background: var(--eop-line-soft); color: var(--eop-text-muted); }
+.eop_wrap .eop-flux-pill--soon { background: var(--eop-line-soft); color: var(--eop-text-soft); }
+
+.eop_wrap .eop-flux-sw { display: inline-flex; margin: 0; }
+
+/* The two description columns are the first thing to drop on a narrow
+   screen: the feature name and its status are what the row is for. */
+@media (max-width: 900px) {
+    .eop_wrap .eop-flux-tbl th:nth-child(2),
+    .eop_wrap .eop-flux-tbl td:nth-child(2),
+    .eop_wrap .eop-flux-tbl th:nth-child(3),
+    .eop_wrap .eop-flux-tbl td:nth-child(3) { display: none; }
+}
+
+/* ── Smart Images: engine picker + live status (2.7.0) ────────────────
+   Variant B. The segmented control is the primary affordance — it must
+   read as a real choice, not two tabs, so it is a single bordered pill
+   with a filled active segment. */
+.eop_wrap .eop-seg {
+    display: inline-flex;
+    border: 1px solid var(--eop-line);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--eop-surf);
+}
+.eop_wrap .eop-seg__btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 0;
+    background: var(--eop-surf);
+    color: var(--eop-text-muted);
+    padding: 10px 18px;
+    font-size: 13px;
+    cursor: pointer;
+}
+.eop_wrap .eop-seg__btn + .eop-seg__btn { border-left: 1px solid var(--eop-line); }
+.eop_wrap .eop-seg__btn.is-on { background: var(--eop-brand, #5b4ed9); color: #fff; font-weight: 600; }
+.eop_wrap .eop-seg__tag {
+    font-size: 11px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: var(--eop-line-soft);
+    color: var(--eop-text-muted);
+}
+.eop_wrap .eop-seg__btn.is-on .eop-seg__tag { background: rgba(255,255,255,.22); color: #fff; }
+
+/* Live optimization status. The bar animates only while running so the
+   page reads as alive without a spinner permanently on screen. */
+.eop_wrap .eop-imgstat {
+    border: 1px solid var(--eop-line);
+    border-radius: 8px;
+    background: var(--eop-bg-alt);
+    padding: 16px;
+}
+.eop_wrap .eop-imgstat__head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 16px;
+    font-size: 13px;
+    color: var(--eop-ink);
+}
+.eop_wrap .eop-imgstat__pct { font-size: 20px; font-weight: 600; color: var(--eop-ink); }
+.eop_wrap .eop-imgstat__bar {
+    margin-top: 8px;
+    background: #e2e4e7;
+    border-radius: 4px;
+    height: 10px;
+    overflow: hidden;
+    max-width: 520px;
+}
+.eop_wrap .eop-imgstat__fill {
+    height: 100%;
+    background: var(--eop-ok, #0c9d57);
+    transition: width .5s ease;
+}
+/* A candy-stripe wash while running, so a stalled bar and a working one
+   look different even at the same percentage. */
+.eop_wrap .eop-imgstat__fill.is-running {
+    background-image: linear-gradient(45deg, rgba(255,255,255,.28) 25%, transparent 25%, transparent 50%, rgba(255,255,255,.28) 50%, rgba(255,255,255,.28) 75%, transparent 75%, transparent);
+    background-size: 20px 20px;
+    animation: eop-stripe 0.8s linear infinite;
+}
+@keyframes eop-stripe { from { background-position: 0 0; } to { background-position: 20px 0; } }
+.eop_wrap .eop-imgstat__spin {
+    display: inline-block;
+    width: 11px; height: 11px;
+    border: 2px solid var(--eop-line);
+    border-top-color: var(--eop-ok, #0c9d57);
+    border-radius: 50%;
+    animation: eop-spin 0.7s linear infinite;
+    vertical-align: -1px;
+}
+@keyframes eop-spin { to { transform: rotate(360deg); } }
+
+/* ══ Cloud Optimization — slim bar, hero, buttons, switches (2.7.1) ═════
+   Brand indigo throughout (--eop-brand), replacing the old dark strip and
+   the WP-blue fallbacks. */
+
+/* Slim bar, on every screen. Value-prop when signed out, quiet when on. */
+.eop_wrap .eop-cloudbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 14px;
+    margin-bottom: 16px;
+    border-radius: 10px;
+    font-size: 13px;
+    color: var(--eop-brand-deep, #4a3fc4);
+    background: linear-gradient(90deg, var(--eop-brand-soft, #eeebff), #ffffff 70%);
+    border: 1px solid var(--eop-brand-soft, #eeebff);
+}
+.eop_wrap .eop-cloudbar__spark { font-size: 15px; filter: saturate(1.2); }
+.eop_wrap .eop-cloudbar__title { font-weight: 700; color: var(--eop-ink, #0f172a); }
+.eop_wrap .eop-cloudbar__pitch { color: var(--eop-brand, #5b4ed9); font-weight: 500; }
+.eop_wrap .eop-cloudbar__note { color: var(--eop-text-muted); }
+.eop_wrap .eop-cloudbar--on {
+    background: linear-gradient(90deg, var(--eop-ok-soft, #d1fae5), #ffffff 70%);
+    border-color: var(--eop-ok-soft, #d1fae5);
+    color: var(--eop-ok-fg, #047857);
+}
+.eop_wrap .eop-cloudbar__dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--eop-ok, #10b981);
+    box-shadow: 0 0 0 3px rgba(16,185,129,.18);
+}
+.eop_wrap .eop-cloudbar__btn {
+    font-size: 12px; font-weight: 600; padding: 5px 12px; border-radius: 999px;
+    cursor: pointer; text-decoration: none; line-height: 1.4; border: 1px solid transparent;
+}
+.eop_wrap .eop-cloudbar__btn--ghost { color: var(--eop-brand, #5b4ed9); border-color: transparent; background: transparent; }
+.eop_wrap .eop-cloudbar__btn--ghost:hover { background: rgba(91,78,217,.08); }
+.eop_wrap .eop-cloudbar__btn--solid { color: #fff; background: var(--eop-brand, #5b4ed9); }
+.eop_wrap .eop-cloudbar__btn--solid:hover { background: var(--eop-brand-deep, #4a3fc4); }
+
+/* Hero band on the Cloud Optimization tab. */
+.eop_wrap .eop-cloudhero {
+    display: flex; align-items: center; justify-content: space-between; gap: 20px;
+    flex-wrap: wrap;
+    margin-top: 16px; padding: 20px;
+    border-radius: 12px;
+    background: linear-gradient(120deg, var(--eop-brand-soft, #eeebff), #ffffff 80%);
+    border: 1px solid var(--eop-brand-soft, #eeebff);
+}
+.eop_wrap .eop-cloudhero--on {
+    background: var(--eop-surf, #fff);
+    border-color: var(--eop-line, #e6e8ee);
+}
+.eop_wrap .eop-cloudhero__hd { font-size: 18px; font-weight: 700; color: var(--eop-ink, #0f172a); }
+.eop_wrap .eop-cloudhero__row { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--eop-ink); }
+.eop_wrap .eop-cloudhero__acct { color: var(--eop-text-muted); font-weight: 400; }
+.eop_wrap .eop-cloudhero__dot { width: 9px; height: 9px; border-radius: 50%; background: var(--eop-ok, #10b981); box-shadow: 0 0 0 3px rgba(16,185,129,.18); }
+
+/* One NEW button modifier only. The base .eop-btn and .eop-btn--ghost already
+   exist for the toolbar (Safe Mode / Debug) and elsewhere — an earlier build
+   redefined them here, which recoloured the whole toolbar (the 2.7.0 regression
+   the owner reported). This adds a brand-filled --solid and nothing else, so
+   every existing button keeps its own styling. */
+.eop_wrap .eop-btn--solid { color: #fff; background: var(--eop-brand, #5b4ed9); border-color: transparent; box-shadow: 0 1px 2px rgba(74,63,196,.25); }
+.eop_wrap .eop-btn--solid:hover:not(:disabled) { background: var(--eop-brand-deep, #4a3fc4); color: #fff; box-shadow: 0 2px 8px rgba(74,63,196,.3); }
+
+/* Connect-by-key box. */
+.eop_wrap .eop-keybox {
+    margin-top: 22px; padding: 16px; border-radius: 10px;
+    background: var(--eop-bg-alt, #f6f7f9); border: 1px solid var(--eop-line, #e6e8ee);
+}
+.eop_wrap .eop-keybox__label { font-weight: 600; color: var(--eop-ink); margin-bottom: 10px; }
+.eop_wrap .eop-keybox__row { display: flex; gap: 8px; flex-wrap: wrap; }
+.eop_wrap .eop-keybox__input {
+    flex: 1; min-width: 240px; padding: 8px 12px; font-family: ui-monospace, Menlo, monospace;
+    border: 1px solid var(--eop-line, #e6e8ee); border-radius: 8px; background: var(--eop-surf, #fff);
+}
+.eop_wrap .eop-keybox__input:focus { outline: none; border-color: var(--eop-brand, #5b4ed9); box-shadow: 0 0 0 3px rgba(91,78,217,.15); }
+
+/* Feature-map toggle — a real switch, brand when on, frozen + locked when
+   there is no account to enable it. */
+.eop_wrap .eop-flux-sw { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.eop_wrap .eop-flux-sw input { position: absolute; opacity: 0; width: 0; height: 0; }
+.eop_wrap .eop-flux-sw__track {
+    width: 38px; height: 22px; border-radius: 999px; background: #cfd3dc;
+    position: relative; transition: background .15s ease; flex: none;
+}
+.eop_wrap .eop-flux-sw__knob {
+    position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%;
+    background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: transform .15s ease;
+}
+.eop_wrap .eop-flux-sw input:checked + .eop-flux-sw__track { background: var(--eop-brand, #5b4ed9); }
+.eop_wrap .eop-flux-sw input:checked + .eop-flux-sw__track .eop-flux-sw__knob { transform: translateX(16px); }
+.eop_wrap .eop-flux-sw.is-frozen { cursor: not-allowed; }
+.eop_wrap .eop-flux-sw.is-frozen .eop-flux-sw__track { background: #e2e4e7; opacity: .7; }
+.eop_wrap .eop-flux-sw__lock { font-size: 12px; opacity: .6; }
+
+/* Cloud feature-map: outcome row + ✓/✕ marks (2.7.1). The 90+ scores row is
+   a deliberately aspirational summary — X on your own, checkmark with Cloud —
+   so it is tinted to read as the payoff line rather than another feature. */
+.eop_wrap .eop-flux-x { color: var(--eop-bad, #d63638); font-weight: 700; font-size: 15px; }
+.eop_wrap .eop-flux-check { color: var(--eop-ok, #10b981); font-weight: 700; font-size: 15px; }
+.eop_wrap .eop-flux-outcome td { background: var(--eop-brand-soft, #eeebff); }
+.eop_wrap .eop-flux-outcome .eop-flux-tbl__name { font-weight: 700; color: var(--eop-ink, #0f172a); }
+
+/* Cloud feature-map: all cell text bold, feature names strongest (2.7.1). */
+.eop_wrap .eop-flux-tbl td { font-weight: 600; }
+.eop_wrap .eop-flux-tbl__name strong { font-weight: 700; }
+
+/* ===================================================================== */
+/* 2.7.2 Cloud / Smart-Images conversion redesign                        */
+/*   1A gauge hero · 2B benefit tiles · 3C after-scan · 4A upgrade card   */
+/* ===================================================================== */
+
+/* Score gauge (1A) */
+.eop_wrap .eop-gauge { position: relative; width: 116px; height: 116px; flex: none; }
+.eop_wrap .eop-gauge__val { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.eop_wrap .eop-gauge__val b { font-size: 32px; font-weight: 800; line-height: 1; color: var(--eop-ink); }
+.eop_wrap .eop-gauge__val small { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--eop-text-muted); margin-top: 2px; }
+
+/* Cloud pitch hero (1A) */
+.eop_wrap .eop-cloudpitch { margin-top: 16px; }
+.eop_wrap .eop-cloudhero--pitch { align-items: center; justify-content: flex-start; gap: 26px; }
+.eop_wrap .eop-cloudhero__hd--lg { font-size: 24px; line-height: 1.15; }
+.eop_wrap .eop-cloudhero__pitchbody { flex: 1; min-width: 240px; }
+.eop_wrap .eop-cloudhero__cta { display: flex; align-items: center; gap: 14px; margin-top: 16px; flex-wrap: wrap; }
+.eop_wrap .eop-cloudhero__trust { font-size: 13px; color: var(--eop-text-muted); }
+.eop_wrap .eop-btn--lg { padding: 12px 22px; font-size: 15px; border-radius: 10px; }
+.eop_wrap .eop-btn--block { width: 100%; justify-content: center; }
+
+/* Stat strip under the hero (1A) */
+.eop_wrap .eop-cloudstats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 14px; }
+.eop_wrap .eop-cloudstats > div { text-align: center; padding: 14px 8px; background: var(--eop-bg-alt); border: 1px solid var(--eop-line); border-radius: 10px; }
+.eop_wrap .eop-cloudstats b { display: block; font-size: 22px; font-weight: 800; color: var(--eop-brand-deep); font-variant-numeric: tabular-nums; }
+.eop_wrap .eop-cloudstats span { font-size: 12px; color: var(--eop-text-muted); }
+
+/* Benefit tiles (2B) */
+.eop_wrap .eop-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 16px 0; }
+.eop_wrap .eop-tile { border: 1px solid var(--eop-line); border-radius: 12px; padding: 16px; background: var(--eop-surf); }
+.eop_wrap .eop-tile__ic { width: 38px; height: 38px; border-radius: 10px; background: var(--eop-brand-soft); color: var(--eop-brand); display: flex; align-items: center; justify-content: center; margin-bottom: 10px; }
+.eop_wrap .eop-tile h5 { margin: 0 0 4px; font-size: 15px; font-weight: 700; color: var(--eop-ink); }
+.eop_wrap .eop-tile p { margin: 0; font-size: 13px; color: var(--eop-text-muted); line-height: 1.5; }
+.eop_wrap .eop-scan-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 6px; }
+.eop_wrap .eop-scan-note { font-size: 12.5px; color: var(--eop-text-muted); }
+
+/* After-scan two-column (3C) */
+.eop_wrap .eop-af { display: grid; grid-template-columns: 1.15fr .85fr; gap: 20px; margin-top: 8px; align-items: start; }
+.eop_wrap .eop-af__proof { min-width: 0; }
+.eop_wrap .eop-af__stat { display: flex; align-items: baseline; gap: 8px; }
+.eop_wrap .eop-af__pct { font-size: 46px; font-weight: 800; line-height: 1; color: var(--eop-ok-fg); font-variant-numeric: tabular-nums; }
+.eop_wrap .eop-af__pctlabel { font-size: 14px; color: var(--eop-text-muted); }
+.eop_wrap .eop-af__bytes { margin: 10px 0 0; font-size: 14px; color: var(--eop-ink); }
+.eop_wrap .eop-af__bytes s { color: var(--eop-text-soft); }
+.eop_wrap .eop-af__bytes strong { color: var(--eop-ok-fg); }
+.eop_wrap .eop-af__sample { margin: 10px 0 0; font-size: 12.5px; color: var(--eop-warn-fg); background: var(--eop-warn-soft); border-left: 3px solid var(--eop-warn); padding: 7px 10px; border-radius: 0 6px 6px 0; }
+.eop_wrap .eop-af__tbl { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 13px; }
+.eop_wrap .eop-af__tbl th { text-align: left; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--eop-text-soft); font-weight: 600; padding: 0 10px 8px; }
+.eop_wrap .eop-af__tbl td { padding: 9px 10px; border-top: 1px solid var(--eop-line-soft); }
+.eop_wrap .eop-af__tbl code { font-size: 12px; color: var(--eop-text-muted); word-break: break-all; }
+.eop_wrap .eop-af__tbl th:nth-child(n+2), .eop_wrap .eop-af__tbl td:nth-child(n+2) { text-align: right; white-space: nowrap; }
+.eop_wrap .eop-af__tbl th:first-child, .eop_wrap .eop-af__tbl td:first-child { width: 60%; }
+.eop_wrap .eop-af__after { color: var(--eop-ok-fg); font-weight: 600; }
+.eop_wrap .eop-af__saved { color: var(--eop-ok-fg); }
+.eop_wrap .eop-af__reanalyze { margin: 10px 0 0; font-size: 13px; }
+.eop_wrap .eop-af__skip { margin: 6px 0 0; font-size: 12px; color: var(--eop-text-soft); }
+.eop_wrap .eop-af__offer { border-radius: 14px; padding: 22px; color: #fff; background: linear-gradient(160deg, var(--eop-brand), #8b5cf6); box-shadow: 0 12px 30px -12px rgba(91,78,217,.5); position: sticky; top: 12px; }
+.eop_wrap .eop-af__eyebrow { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; opacity: .85; }
+.eop_wrap .eop-af__head { font-size: 22px; font-weight: 800; line-height: 1.15; margin-top: 8px; color: #fff; }
+.eop_wrap .eop-af__checks { list-style: none; padding: 0; margin: 16px 0; display: flex; flex-direction: column; gap: 9px; font-size: 13.5px; }
+.eop_wrap .eop-af__checks li { position: relative; padding-left: 24px; }
+.eop_wrap .eop-af__checks li::before { content: "\2713"; position: absolute; left: 0; top: 0; font-weight: 700; color: #fff; }
+.eop_wrap .eop-af__cta { background: #fff !important; color: var(--eop-brand-deep) !important; box-shadow: none !important; }
+.eop_wrap .eop-af__cta:hover:not(:disabled) { background: #f3f2ff !important; color: var(--eop-brand-deep) !important; }
+.eop_wrap .eop-af__stars { margin: 12px 0 0; font-size: 12.5px; opacity: .9; text-align: center; }
+.eop_wrap .eop-af__terms { margin: 14px 0 0; font-size: 11px; opacity: .8; }
+.eop_wrap .eop-af__terms a { color: #fff; text-decoration: underline; }
+
+/* Sidebar upgrade card (4A) */
+.eop_wrap .eop-upsell { margin: 12px 12px 0; border-radius: 12px; padding: 16px; color: #fff; background: linear-gradient(150deg, var(--eop-brand), #8b5cf6); }
+.eop_wrap .eop-upsell__tag { display: inline-block; font-size: 11px; font-weight: 600; background: rgba(255,255,255,.18); padding: 3px 8px; border-radius: 6px; margin-bottom: 10px; }
+.eop_wrap .eop-upsell__title { font-size: 15px; font-weight: 700; }
+.eop_wrap .eop-upsell__body { font-size: 12px; opacity: .9; margin: 4px 0 12px; line-height: 1.45; }
+.eop_wrap .eop-upsell__btn { width: 100%; border: none; border-radius: 9px; padding: 9px; background: #fff; color: var(--eop-brand-deep); font-weight: 700; font-size: 13px; cursor: pointer; }
+.eop_wrap .eop-upsell__btn:hover { background: #f3f2ff; }
+.eop_wrap .eop-upsell__link { display: block; text-align: center; margin-top: 9px; font-size: 12px; color: rgba(255,255,255,.9); text-decoration: underline; }
+/* Dashboard placement (moved out of the sidebar): full card width, sits under Quick actions. */
+.eop_wrap .eop-upsell--dash { margin: 16px 0 0; }
+.eop_wrap .eop-upsell--dash .eop-upsell__title { font-size: 17px; margin-top: 2px; }
+.eop_wrap .eop-upsell--dash .eop-upsell__body { font-size: 13px; }
+.eop_wrap .eop-upsell--dash .eop-upsell__btn { padding: 11px; font-size: 14px; margin-top: 4px; }
+
+@media (max-width: 900px) {
+    .eop_wrap .eop-af { grid-template-columns: 1fr; }
+    .eop_wrap .eop-af__offer { position: static; }
+}
+@media (max-width: 700px) {
+    .eop_wrap .eop-tiles { grid-template-columns: 1fr; }
+    .eop_wrap .eop-cloudstats { grid-template-columns: repeat(2, 1fr); }
+    .eop_wrap .eop-cloudhero--pitch { flex-wrap: wrap; }
+}
