@@ -162,9 +162,20 @@ class EasyOpt_CDN_Cloud {
 	 * is already proven by every other tenant on the same hostname.
 	 */
 	public static function is_delivering() {
-		return self::is_connected()
-			&& 1 === (int) EasyOpt_Config::get( 'cloud_active', 0 )
+		return self::is_entitled()
 			&& (int) EasyOpt_Config::get( 'img_opt', 0 );
+	}
+
+	/**
+	 * (2.7.2) Account gate WITHOUT the Images toggle: connected and the
+	 * control plane says the plan is active. Edge CSS/JS/fonts and the cloud
+	 * font mode key off this, so switching Images off no longer takes the
+	 * rest of the CDN down with it. A revoked / lapsed plan still stops
+	 * everything — cloud_active goes to 0.
+	 */
+	public static function is_entitled() {
+		return self::is_connected()
+			&& 1 === (int) EasyOpt_Config::get( 'cloud_active', 0 );
 	}
 
 	/* ─────────────────────────────────────────────
@@ -619,7 +630,7 @@ class EasyOpt_CDN_Cloud {
 	}
 
 	/** Clear anything that has origin URLs baked into it. */
-	private static function flush_generated() {
+	public static function flush_generated() {
 		if ( class_exists( 'EasyOpt_Unused_CSS' ) && method_exists( 'EasyOpt_Unused_CSS', 'clear_used_css_only' ) ) {
 			EasyOpt_Unused_CSS::clear_used_css_only();
 		}

@@ -666,6 +666,10 @@ class EasyOpt_Unused_CSS {
         if ( class_exists( 'EasyOpt_CDN' ) && (int) EasyOpt_Config::get( 'img_opt', 0 ) ) {
             $css = EasyOpt_CDN::rewrite_css_urls( $css );
         }
+        // (2.7.2) Fonts / static url()s → the edge. Images were handled above.
+        if ( class_exists( 'EasyOpt_CDN_Assets' ) && EasyOpt_CDN_Assets::enabled() ) {
+            $css = EasyOpt_CDN_Assets::rewrite_css_urls( $css );
+        }
 
         // Persist for the next render (best-effort; failures just mean the
         // next render transforms live again).
@@ -741,6 +745,18 @@ class EasyOpt_Unused_CSS {
             );
         } else {
             $parts[] = 'cdn:off';
+        }
+
+        // (2.7.2) Static-asset transform inputs. Mirrors
+        // EasyOpt_CDN_Assets::rewrite_css_urls() → cdn_url().
+        if ( class_exists( 'EasyOpt_CDN_Assets' ) && EasyOpt_CDN_Assets::enabled() ) {
+            $parts[] = 'assets:' . md5(
+                EasyOpt_CDN_Cloud::endpoint() . '|' . EasyOpt_CDN_Cloud::account()
+                . '|' . EasyOpt_CDN_Assets::REV
+                . '|' . (string) EasyOpt_Config::get( 'easyopt_cloud_assets_exclude', '' )
+            );
+        } else {
+            $parts[] = 'assets:off';
         }
 
         return md5( implode( '|', $parts ) );
@@ -1856,16 +1872,24 @@ class EasyOpt_Unused_CSS {
         }
 
         if ( ! empty( self::$safelist_patterns ) ) {
-            // (2.5.4 / perf #18) One compiled alternation when available;
-            // per-pattern loop kept as the fallback (e.g. compile skipped).
-            if ( null !== self::$safelist_regex ) {
-                if ( preg_match( self::$safelist_regex, $selector['selector'] ?? '' ) ) {
-                    return true;
-                }
-            } else {
-                foreach ( self::$safelist_patterns as $excl ) {
-                    if ( preg_match( '#(' . preg_quote( $excl, '#' ) . ')' . self::SAFELIST_BOUNDARY . '#', $selector['selector'] ?? '' ) ) {
+            // (2.7.2) Match the raw selector AND its unescaped form, so an
+            // exclusion typed as `md:hidden` protects `.md\:hidden`.
+            $texts = array( $selector['selector'] ?? '' );
+            if ( isset( $selector['plain'] ) ) {
+                $texts[] = $selector['plain'];
+            }
+            foreach ( $texts as $text ) {
+                // (2.5.4 / perf #18) One compiled alternation when available;
+                // per-pattern loop kept as the fallback (e.g. compile skipped).
+                if ( null !== self::$safelist_regex ) {
+                    if ( preg_match( self::$safelist_regex, $text ) ) {
                         return true;
+                    }
+                } else {
+                    foreach ( self::$safelist_patterns as $excl ) {
+                        if ( preg_match( '#(' . preg_quote( $excl, '#' ) . ')' . self::SAFELIST_BOUNDARY . '#', $text ) ) {
+                            return true;
+                        }
                     }
                 }
             }

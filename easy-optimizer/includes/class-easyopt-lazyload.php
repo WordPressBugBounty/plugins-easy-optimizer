@@ -6,10 +6,8 @@
  * videos, and CSS background images. Adds missing width/height dimensions
  * by reading the actual file headers.
  *
- * tree build per request). Now uses WordPress core's WP_HTML_Processor
- * (since WP 6.4) for tree-aware traversal with O(1) ancestor checks via
- * `get_breadcrumbs()`, and WP_HTML_Tag_Processor for the in-place attribute
- * mutations. The new pipeline avoids the recursive PHP DOM walk that was
+ * tree build per request). Now uses WordPress core's WP_HTML_Tag_Processor
+ * for both the nesting pre-pass and the in-place attribute mutations. The new pipeline avoids the recursive PHP DOM walk that was
  * the previous bottleneck.
  *
  * @package EasyOptimizer
@@ -90,7 +88,7 @@ class EasyOpt_LazyLoad {
      * Process the HTML buffer.
      *
      * Two-pass design:
-     *   1. WP_HTML_Processor pre-pass — tree-aware. Builds a token-index
+     *   1. Tag Processor pre-pass — tracks nesting via closers. Builds a token-index
      *      lookup of (a) tags to skip (inside <noscript> or #wpadminbar)
      *      and (b) <source> tags whose sibling <img> we'll lazy-load
      *      (so we transform their srcset to data-srcset).
@@ -127,10 +125,9 @@ class EasyOpt_LazyLoad {
             return $html;
         }
 
-        // Both classes required. Tag_Processor since 6.2; HTML_Processor
-        // since 6.4. If either is missing, return unchanged — same fallback
-        // pattern as class-easyopt-accessibility.php.
-        if ( ! class_exists( 'WP_HTML_Tag_Processor' ) || ! class_exists( 'WP_HTML_Processor' ) ) {
+        // Tag_Processor since 6.2. If missing, return unchanged — same
+        // fallback pattern as class-easyopt-accessibility.php.
+        if ( ! class_exists( 'WP_HTML_Tag_Processor' ) ) {
             return $html;
         }
 
@@ -138,17 +135,8 @@ class EasyOpt_LazyLoad {
         $exclude_first  = absint( EasyOpt_Config::get( 'lazyload_exclude_first', 2 ) );
         $exclude_lines  = self::parse_exclude_lines( $exclude_values );
 
-        // ── Pass 1 — tree-aware metadata collection ──
+        // ── Pass 1 — nesting metadata (noscript / adminbar / picture) ──
         $meta = self::collect_metadata( $html );
-        if ( null === $meta ) {
-            // Parser bailed (unsupported HTML). Fall back to an empty meta
-            // table — the mutation pass still works, just without the
-            // ancestor-aware skips.
-            $meta = array(
-                'skip_bookmarks'       => array(),
-                'picture_source_pairs' => array(),
-            );
-        }
 
         $native = self::native_mode();
 
@@ -190,7 +178,8 @@ class EasyOpt_LazyLoad {
                     break;
 
                 case 'VIDEO':
-                    if ( $skip_this ) {
+                    // (2.7.2) Measured as this page's LCP — never defer it.
+                    if ( $skip_this || isset( $meta['lcp_videos'][ $token_index ] ) ) {
                         break;
                     }
                     if ( $lazy_videos && self::video_eligible( $p, $exclude_lines ) ) {
@@ -255,74 +244,90 @@ class EasyOpt_LazyLoad {
 
     private static function collect_metadata( $html ) {
 
-        $proc = WP_HTML_Processor::create_fragment( $html );
-        if ( ! $proc ) {
-            return null;
-        }
+        // (2.7.2) Same tokenizer as pass 2, NOT WP_HTML_Processor. The tree
+        // parser numbered tags differently from the Tag Processor — as a body
+        // fragment it never yields <html>/<head>/<body>, and it adds virtual
+        // tags — so every skip index landed on the wrong tag and a GTM
+        // <noscript><iframe> got data-src. Counting the Tag Processor's own
+        // openers keeps both passes aligned by construction; closers are
+        // visited only to track nesting.
+        $p = new WP_HTML_Tag_Processor( $html );
 
         $skip_bookmarks       = array();
         $picture_source_pairs = array();
-        $wpadminbar_depth     = null;
-        $pending_sources_at_depth = array();
-        $token_index = 0;
+        $noscript_depth       = 0;
+        $wpadminbar           = null;    // array( tag, depth ) while inside #wpadminbar
+        $picture_stack        = array(); // pending <source> indexes per open <picture>
+        $lcp_videos           = array(); // <video> token indexes measured as the LCP
+        $video_open           = null;    // token index of the open <video>
+        $token_index          = 0;
 
-        while ( $proc->next_tag() ) {
+        while ( $p->next_tag( array( 'tag_closers' => 'visit' ) ) ) {
+            $tag = $p->get_tag();
+
+            if ( $p->is_tag_closer() ) {
+                if ( 'NOSCRIPT' === $tag && $noscript_depth > 0 ) {
+                    $noscript_depth--;
+                } elseif ( 'PICTURE' === $tag && $picture_stack ) {
+                    array_pop( $picture_stack );
+                } elseif ( 'VIDEO' === $tag ) {
+                    $video_open = null;
+                }
+                if ( null !== $wpadminbar && $tag === $wpadminbar[0] && 0 === --$wpadminbar[1] ) {
+                    $wpadminbar = null;
+                }
+                continue;
+            }
 
             $token_index++;
-            $tag    = $proc->get_tag();
-            $crumbs = $proc->get_breadcrumbs();
-            if ( ! is_array( $crumbs ) ) {
-                $crumbs = array();
-            }
-            $depth = count( $crumbs );
 
-            // Exit-from-wpadminbar.
-            if ( null !== $wpadminbar_depth && $depth <= $wpadminbar_depth ) {
-                $wpadminbar_depth = null;
+            // Same-name nesting inside #wpadminbar, so its own closer is found.
+            if ( null !== $wpadminbar && $tag === $wpadminbar[0] ) {
+                $wpadminbar[1]++;
+            }
+            if ( null === $wpadminbar && 'wpadminbar' === (string) $p->get_attribute( 'id' ) ) {
+                $wpadminbar = array( $tag, 1 );
             }
 
-            $inside_noscript = in_array( 'NOSCRIPT', $crumbs, true );
-            if ( $inside_noscript || null !== $wpadminbar_depth ) {
+            if ( $noscript_depth > 0 || null !== $wpadminbar ) {
                 $skip_bookmarks[ $token_index ] = true;
             }
-
-            // Enter-into-wpadminbar (after skip-marking so the wrapper
-            // itself is also skipped).
-            if ( null === $wpadminbar_depth ) {
-                $id = (string) $proc->get_attribute( 'id' );
-                if ( 'wpadminbar' === $id ) {
-                    $wpadminbar_depth = $depth;
-                    $skip_bookmarks[ $token_index ] = true;
-                }
+            if ( 'NOSCRIPT' === $tag ) {
+                $noscript_depth++;
             }
 
-            // <picture> / <source> bookkeeping.
-            if ( 'SOURCE' === $tag ) {
-                $picture_pos = self::last_index_of( $crumbs, 'PICTURE' );
-                if ( null !== $picture_pos ) {
-                    $key = $picture_pos + 1;
-                    if ( ! isset( $pending_sources_at_depth[ $key ] ) ) {
-                        $pending_sources_at_depth[ $key ] = array();
-                    }
-                    $pending_sources_at_depth[ $key ][] = $token_index;
+            // <picture> / <source> bookkeeping: a <source> is paired once its
+            // picture's (non-skipped) <img> appears.
+            // (2.7.2) A poster-less LCP <video> is recorded by its source URL,
+            // which usually sits on a child <source> the mutation pass never
+            // sees from the <video> tag — resolve it here.
+            if ( 'VIDEO' === $tag ) {
+                $video_open = $token_index;
+                if ( self::is_lcp_url( (string) $p->get_attribute( 'src' ) ) ) {
+                    $lcp_videos[ $token_index ] = true;
                 }
-            } elseif ( 'IMG' === $tag ) {
-                $picture_pos = self::last_index_of( $crumbs, 'PICTURE' );
-                if ( null !== $picture_pos && ! isset( $skip_bookmarks[ $token_index ] ) ) {
-                    $key = $picture_pos + 1;
-                    if ( ! empty( $pending_sources_at_depth[ $key ] ) ) {
-                        foreach ( $pending_sources_at_depth[ $key ] as $idx ) {
-                            $picture_source_pairs[ $idx ] = true;
-                        }
-                    }
-                    unset( $pending_sources_at_depth[ $key ] );
+            } elseif ( 'SOURCE' === $tag && null !== $video_open
+                && self::is_lcp_url( (string) $p->get_attribute( 'src' ) ) ) {
+                $lcp_videos[ $video_open ] = true;
+            }
+
+            if ( 'PICTURE' === $tag ) {
+                $picture_stack[] = array();
+            } elseif ( 'SOURCE' === $tag && $picture_stack ) {
+                $picture_stack[ count( $picture_stack ) - 1 ][] = $token_index;
+            } elseif ( 'IMG' === $tag && $picture_stack && ! isset( $skip_bookmarks[ $token_index ] ) ) {
+                $top = count( $picture_stack ) - 1;
+                foreach ( $picture_stack[ $top ] as $idx ) {
+                    $picture_source_pairs[ $idx ] = true;
                 }
+                $picture_stack[ $top ] = array();
             }
         }
 
         return array(
             'skip_bookmarks'       => $skip_bookmarks,
             'picture_source_pairs' => $picture_source_pairs,
+            'lcp_videos'           => $lcp_videos,
         );
     }
 
@@ -989,14 +994,5 @@ class EasyOpt_LazyLoad {
             }
         }
         return false;
-    }
-
-    private static function last_index_of( array $haystack, $needle ) {
-        for ( $i = count( $haystack ) - 1; $i >= 0; $i-- ) {
-            if ( $haystack[ $i ] === $needle ) {
-                return $i;
-            }
-        }
-        return null;
     }
 }

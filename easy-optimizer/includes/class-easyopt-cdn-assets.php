@@ -45,6 +45,25 @@ class EasyOpt_CDN_Assets {
      */
     const EXT = array( 'css', 'js', 'mjs', 'woff', 'woff2', 'ttf', 'otf', 'svg', 'ico' );
 
+    /**
+     * Edge revision, appended to every CDN asset URL as ?fx=.
+     *
+     * The edge serves static assets `max-age=1y, immutable`, and it TRANSFORMS
+     * stylesheets (url()/@import re-pointing) on the way through. When that
+     * transform changes, a purge fixes the edge but not the visitor's browser,
+     * which never asks again for a year — and the origin URL (often content-
+     * hashed) does not change. Set this whenever the guard changes what it
+     * serves, so every browser fetches a fresh copy. Empty = no ?fx= at all.
+     *
+     * '' — off (owner's call, 2.7.2). Was '2' for guard 3.6.4 (3.6.3 pointed
+     *      fonts inside served CSS at the imgproxy container, 403ing them);
+     *      browsers still holding that copy recover only when it expires.
+     *
+     * The guard reads only the path, and the origin's own '?' is escaped to
+     * %3F, so this query never reaches the origin or alters the asset fetched.
+     */
+    const REV = '';
+
     /** @var string|null Memoised site host, no www. */
     private static $host = null;
 
@@ -58,8 +77,9 @@ class EasyOpt_CDN_Assets {
      *
      * Four separate gates, and all of them are load-bearing:
      *   - the feature is switched on
-     *   - we hold an account and the service says it is delivering (a lapsed
-     *     trial sets this false, so assets fall back with the images)
+     *   - we hold an account and the service says the plan is active (a
+     *     lapsed trial sets this false, so assets fall back with the images;
+     *     the Images toggle itself does NOT gate assets — 2.7.2)
      *   - this is a front-end page view
      *   - the user is logged out
      *
@@ -74,7 +94,7 @@ class EasyOpt_CDN_Assets {
         if ( ! class_exists( 'EasyOpt_CDN_Cloud' ) ) {
             return false;
         }
-        if ( ! EasyOpt_CDN_Cloud::is_connected() || ! EasyOpt_CDN_Cloud::is_delivering() ) {
+        if ( ! EasyOpt_CDN_Cloud::is_entitled() ) { // not is_delivering(): that also requires Images on
             return false;
         }
         if ( is_admin() || is_user_logged_in() ) {
@@ -190,7 +210,34 @@ class EasyOpt_CDN_Assets {
         $origin = str_replace( array( '%', '?' ), array( '%25', '%3F' ), $url );
 
         return untrailingslashit( (string) EasyOpt_CDN_Cloud::endpoint() )
-            . '/' . EasyOpt_CDN_Cloud::account() . '/s/' . $origin;
+            . '/' . EasyOpt_CDN_Cloud::account() . '/s/' . $origin
+            . ( '' !== self::REV ? '?fx=' . self::REV : '' );
+    }
+
+    /**
+     * (2.7.2) Re-point same-site static url()s — fonts above all — inside CSS
+     * the plugin prints INLINE (the Used CSS block). process_buffer() only
+     * moves assets the HTML names in <link>/<script>, so an inline
+     * `url('/wp-content/…/inter-400.ttf')` resolved against the page's own
+     * origin and never reached the edge. Same mapping and refusals as
+     * cdn_url(): off-site, data: and non-allowlisted (image) URLs are left
+     * alone — images have their own signed path.
+     *
+     * @param string $css
+     * @return string
+     */
+    public static function rewrite_css_urls( $css ) {
+        if ( '' === (string) $css || false === stripos( $css, 'url(' ) ) {
+            return $css;
+        }
+        return preg_replace_callback(
+            '/url\(\s*(["\']?)([^"\')]+)\1\s*\)/i',
+            function ( $m ) {
+                $new = self::cdn_url( $m[2] );
+                return '' === $new ? $m[0] : 'url(' . $m[1] . $new . $m[1] . ')';
+            },
+            $css
+        );
     }
 
     /**

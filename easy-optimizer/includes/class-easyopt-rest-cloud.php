@@ -960,6 +960,7 @@ class EasyOpt_REST_Cloud {
 			'easyopt_unused_css_behavior'     => 'delayed', // …delayed (not async/remove)
 			'easyopt_cloud_unused_css'        => 1,        // cloud (headless) Unused CSS
 			'easyopt_lazyload_fonts'          => 1,        // Smart Lazyload Fonts
+			'easyopt_lcp_preload'             => 1,        // (2.7.2) LCP preload — a fresh install's wizard baseline leaves it 0
 		);
 		foreach ( $force as $opt => $val ) {
 			EasyOpt_Config::set( $opt, $val );
@@ -994,15 +995,15 @@ class EasyOpt_REST_Cloud {
 			'pricing_url' => '',
 		), HOUR_IN_SECONDS );
 
-		// CLEAR THE PAGE CACHE. Without this the site keeps serving cached
-		// HTML built before the connection, so nothing appears to happen and
-		// the user concludes it did not work. The save-coordinator clears
-		// Used CSS, Elementor CSS and LCP rows when img_opt flips, but not
-		// the page cache itself — the legacy connect handler called this
-		// explicitly for exactly the same reason.
-		if ( class_exists( 'EasyOpt_Cache' ) && method_exists( 'EasyOpt_Cache', 'clear_all' ) ) {
-			EasyOpt_Cache::clear_all();
-		}
+		// CLEAR EVERYTHING GENERATED, every connect: Used CSS, LCP rows,
+		// Elementor CSS and the page cache. Without the page-cache wipe the site
+		// keeps serving HTML built before the connection and nothing appears to
+		// happen. (2.7.2) Unconditional: the save-coordinator only clears Used
+		// CSS / LCP when img_opt or cloud_active actually CHANGE, so a reconnect
+		// (or a site already on images) kept Used CSS built under the previous
+		// config. Font beacon measurements are kept — they describe the page,
+		// not the settings.
+		EasyOpt_CDN_Cloud::flush_generated();
 
 		// (2.6.1) SIGN THE FREE MAP NOW, don't wait for maintain().
 		//

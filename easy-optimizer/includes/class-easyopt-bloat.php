@@ -182,10 +182,18 @@ class EasyOpt_Bloat {
     public static function hide_wp_version() {
         remove_action( 'wp_head', 'wp_generator' );
         add_filter( 'the_generator', '__return_empty_string' );
-        // Strip ?ver= from enqueued styles/scripts so the version isn't leaked there.
-        $strip = function ( $src ) {
-            if ( is_string( $src ) && false !== strpos( $src, 'ver=' ) ) {
-                $src = remove_query_arg( 'ver', $src );
+        // Strip ?ver= from enqueued styles/scripts so the WordPress version isn't
+        // leaked there. (2.7.2) ONLY when it IS the WordPress version: a plugin's
+        // or theme's own ver (or Elementor's timestamp) is the cache-buster that
+        // makes an updated file a new URL. Stripping all of them froze CSS/JS on
+        // the edge and in browsers for a year after every update.
+        $wp_ver = (string) get_bloginfo( 'version' );
+        $strip  = function ( $src ) use ( $wp_ver ) {
+            if ( is_string( $src ) && '' !== $wp_ver && false !== strpos( $src, 'ver=' ) ) {
+                parse_str( (string) wp_parse_url( $src, PHP_URL_QUERY ), $args );
+                if ( isset( $args['ver'] ) && (string) $args['ver'] === $wp_ver ) {
+                    $src = remove_query_arg( 'ver', $src );
+                }
             }
             return $src;
         };

@@ -3,17 +3,17 @@ Contributors: easywpstuff, uzairwp
 Donate link: https://paypal.me/uzairwp
 Tags: performance, cache, pagespeed, core web vitals, speed
 Requires at least: 6.4
-Tested up to: 7.1
+Tested up to: 7.1.3
 Requires PHP: 7.4
-Stable tag: 2.7.1
+Stable tag: 2.7.2
 License: GNU General Public License v2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-All-in-one speed plugin: page cache, unused CSS, delay JS, lazy load, LCP preload, WebP & Core Web Vitals. Free, no premium-locked features.
+Free all-in-one performance optimization: page cache, unused CSS, delay JS, lazy load, LCP preload and WebP for faster speed and Core Web Vitals.
 
 == Description ==
 
-Speed up your WordPress site and improve your Google PageSpeed score from a single dashboard. **Easy Optimizer** is a free, all-in-one performance plugin that can replace the 3–5 separate speed plugins most sites run today — page caching, unused-CSS removal, JavaScript delay/defer, image lazy loading, LCP preloading, WebP/AVIF delivery and more — to help you pass Core Web Vitals: Largest Contentful Paint (LCP), Cumulative Layout Shift (CLS) and Interaction to Next Paint (INP). It runs on Apache, Nginx, LiteSpeed and OpenLiteSpeed, and is fully WooCommerce-aware.
+Speed up your WordPress site and improve your Google PageSpeed score from a single dashboard. **Easy Optimizer** is a free, all-in-one performance optimization plugin that can replace the 3–5 separate speed plugins most sites run today — page caching, unused-CSS removal, JavaScript delay/defer, image lazy loading, LCP preloading, WebP/AVIF delivery and more — to help you pass Core Web Vitals: Largest Contentful Paint (LCP), Cumulative Layout Shift (CLS) and Interaction to Next Paint (INP). It runs on Apache, Nginx, LiteSpeed and OpenLiteSpeed, and is fully WooCommerce-aware.
 
 One cache plugin, one dashboard, no premium upsells for core features. Prefer to keep your current cache plugin? Turn off the modules that overlap and use only the tools you want (see the FAQ).
 
@@ -210,6 +210,22 @@ Easy Optimizer's usage analytics are opt-in and disabled by default. When enable
 
 == Changelog ==
 
+= 2.7.2 =
+* Fixed: Remove Unused CSS stopped reading a stylesheet partway through when it met a Tailwind arbitrary-value class such as `bg-[url('/hero.png')]`. Every rule after that point was missing from the critical CSS until the visitor interacted, so padding, gradients and image fitting could jump on first paint. Escaped selectors are now read correctly and matched to the classes on the page.
+* Fixed: with Cloud Optimization connected, the script that loads deferred stylesheets was printed twice. It is now printed once.
+* Fixed: an iframe or image inside `<noscript>` (for example the Google Tag Manager fallback) was being lazy-loaded. Lazy-loading also skipped the wrong elements around the admin bar and could miss `<picture>` sources. All three now behave as intended.
+* Fixed: connecting Cloud Optimization now always clears Used CSS, LCP data and the page cache, so a reconnect no longer serves CSS built under the old settings. Switching edge CSS/JS delivery or cloud Unused CSS in Settings now clears the page cache too.
+* Improved: with Cloud Optimization, Smart Lazyload Fonts no longer loads every font before it has measured a page. Fonts stay out of the critical CSS until the first visit measures which ones are visible, and only those are loaded from then on.
+* Improved: with Cloud Optimization, fonts referenced in the critical (Used) CSS are now served from the edge too, not only the stylesheets and scripts named in the page.
+* Fixed: switching Images off in Cloud Optimization also stopped CSS, JS and fonts from being served from the edge. They are now independent; only an inactive plan stops both.
+* Fixed: with Cloud Optimization connected, LCP preload never learned anything — every measurement of an image served from the edge was discarded, so no page got its hero preloaded. Edge-served LCP images are now recorded and matched to the page's image at any width.
+* Fixed: when only one screen size had been measured, its LCP preload was sent to every screen size, so desktop could download a mobile-only hero image it never shows. Each preload is now limited to the screen size it was measured on.
+* Improved: pages whose largest element is text or a video without a poster are now recorded as measured, so LCP detection stops re-running on every visit, and that video is never lazy-loaded.
+* Improved: connecting Cloud Optimization now also switches on LCP preload.
+* Fixed: "Hide WordPress version" removed the version from every stylesheet and script, including the ones plugins, themes and Elementor use to load a fresh copy after an update. With edge delivery that could keep serving an old file for up to a year. It now removes only the WordPress version itself.
+* Fixed: Excluded CSS Selectors did not protect Tailwind-style classes such as `md:hidden`, `w-1/2` or `2xl:p-4`, because the stylesheet writes them escaped. Exclusions now match whether you type the class as it appears in your HTML or in its escaped form.
+* Fixed: changing edge asset exclusions, <picture> image delivery, native lazy loading, preconnect, font preloading or passthrough stylesheets now clears the page cache (and, for passthrough stylesheets, rebuilds Used CSS) instead of waiting for the cache to expire.
+
 = 2.7.1 =
 * Fixed: background images set in page-builder CSS files (Elementor and similar) now load through the CDN. They are already found during analysis; enabling edge CSS/JS delivery on connect is what lets them actually be served optimized, so the hero background — usually your largest image — is no longer left on your own server.
 * Fixed: the Debug Log could show a warning count in its header while the panel underneath read "No warnings or errors logged." A run of routine info lines could push the real warnings out of the view window. The count and the list are now read together, so they always agree, and older warnings are no longer hidden behind recent activity.
@@ -403,5 +419,5 @@ Easy Optimizer's usage analytics are opt-in and disabled by default. When enable
 
 == Upgrade Notice ==
 
-= 2.6.7 =
-Rebuilds Prefetch Pages on the browser's native Speculation Rules API: no link-scanning JavaScript, rules available in the page head instead of the footer, and WordPress Core's own speculative loading is switched off so a page never runs two prefetchers at once.
+= 2.7.2 =
+Fixes Remove Unused CSS dropping rules on Tailwind sites, lazy-loaded <noscript> iframes, and several Cloud Optimization issues (LCP preload, edge-served fonts, the Images toggle). Used CSS is rebuilt once after updating, so expect a short regeneration period.

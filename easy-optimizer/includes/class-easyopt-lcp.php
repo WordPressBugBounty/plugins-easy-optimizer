@@ -500,24 +500,46 @@ class EasyOpt_LCP {
         $selector     = isset( $src['selector'] )     ? self::sanitize_selector( wp_unslash( $src['selector'] ) ) : '';
         $lcp_size     = isset( $src['lcp_size'] )     ? absint( $src['lcp_size'] ) : 0;
 
-        if ( '' === $image_url || ! in_array( $viewport, array( 'mobile', 'desktop' ), true ) ) {
+        $allowed_kinds = array( 'img', 'img-srcset', 'background', 'background-set', 'picture', 'video-poster', 'none', 'video' );
+        if ( ! in_array( $element_kind, $allowed_kinds, true ) ) {
+            $element_kind = 'img';
+        }
+
+        if ( ! in_array( $viewport, array( 'mobile', 'desktop' ), true ) ) {
             return;
         }
         if ( $lcp_size < self::MIN_LCP_SIZE ) {
             return;
         }
-        // Image (or background) must be same-origin (or configured CDN host).
-        if ( ! self::is_same_origin( $image_url ) ) {
-            return;
-        }
-        // Never store a video URL as an LCP image preload (see is_video_url).
-        if ( self::is_video_url( $image_url ) ) {
-            return;
-        }
 
-        $allowed_kinds = array( 'img', 'img-srcset', 'background', 'background-set', 'picture', 'video-poster' );
-        if ( ! in_array( $element_kind, $allowed_kinds, true ) ) {
-            $element_kind = 'img';
+        if ( 'none' === $element_kind ) {
+            // (2.7.2) Measured, nothing to preload (text LCP). Stored as an
+            // empty marker so the page counts as warm and the beacon stops;
+            // process_buffer() emits nothing for it.
+            $image_url = '';
+            $srcset    = '';
+            $sizes     = '';
+        } elseif ( 'video' === $element_kind ) {
+            // (2.7.2) Poster-less <video>. Its source is kept only so the lazy
+            // pass can recognise and never defer it — it is never preloaded,
+            // so a third-party video host is fine here.
+            if ( '' === $image_url ) {
+                return;
+            }
+            $srcset = '';
+            $sizes  = '';
+        } else {
+            if ( '' === $image_url ) {
+                return;
+            }
+            // Image (or background) must be same-origin (or configured CDN host).
+            if ( ! self::is_same_origin( $image_url ) ) {
+                return;
+            }
+            // Never store a video URL as an LCP image preload (see is_video_url).
+            if ( self::is_video_url( $image_url ) ) {
+                return;
+            }
         }
 
         global $wpdb;
@@ -746,19 +768,16 @@ class EasyOpt_LCP {
             return $html;
         }
 
-        // Media-query scoping: only scope by viewport when BOTH buckets are
-        // present; otherwise serve the single known image to everyone.
-        $buckets_present = array();
-        foreach ( $rows as $row ) {
-            $buckets_present[ $row['viewport'] ] = true;
-        }
-        $scope_by_media = ( isset( $buckets_present['mobile'] ) && isset( $buckets_present['desktop'] ) );
-
         $preload_html  = '';
         $matching_urls = array();
 
         foreach ( $rows as $row ) {
             $kind = isset( $row['element_kind'] ) ? $row['element_kind'] : 'img';
+
+            // (2.7.2) Measured, nothing to preload: text LCP or poster-less video.
+            if ( 'none' === $kind || 'video' === $kind || '' === (string) $row['image_url'] ) {
+                continue;
+            }
 
             // Defence-in-depth for rows written by a pre-2.4.9 build: never
             // emit an as="image" preload for a video URL (see is_video_url).
@@ -777,12 +796,14 @@ class EasyOpt_LCP {
                     $link .= ' imagesizes="' . esc_attr( $row['sizes'] ) . '"';
                 }
             }
-            if ( $scope_by_media ) {
-                $media = ( 'mobile' === $row['viewport'] )
-                    ? '(max-width: ' . ( self::MOBILE_BREAK - 1 ) . 'px)'
-                    : '(min-width: ' . self::MOBILE_BREAK . 'px)';
-                $link .= ' media="' . esc_attr( $media ) . '"';
-            }
+            // (2.7.2) Always scoped to the viewport it was measured on. Serving a
+            // single measured image to every viewport made desktop fetch a
+            // mobile-only hero (display:none there); the unmeasured viewport
+            // now gets nothing until its own beacon reports.
+            $media = ( 'mobile' === $row['viewport'] )
+                ? '(max-width: ' . ( self::MOBILE_BREAK - 1 ) . 'px)'
+                : '(min-width: ' . self::MOBILE_BREAK . 'px)';
+            $link .= ' media="' . esc_attr( $media ) . '"';
             $link .= ' data-easyopt-lcp="' . esc_attr( $row['viewport'] ) . '">';
             $preload_html .= $link;
 
@@ -976,7 +997,15 @@ class EasyOpt_LCP {
      * @return string
      */
     public static function url_path_key( $url ) {
-        $path = wp_parse_url( (string) $url, PHP_URL_PATH );
+        $url = (string) $url;
+        // (2.7.2) A Cloud URL's path is /{account}/{sig}/{transform}/plain/…,
+        // so it never matched by path. Compare by the origin it wraps — a
+        // stored edge URL then matches the <img> at whatever width it was
+        // painted, and an origin URL is returned unchanged.
+        if ( false !== stripos( $url, '/plain/' ) && class_exists( 'EasyOpt_Rest_Cloud' ) ) {
+            $url = EasyOpt_Rest_Cloud::unwrap_cdn_url( $url );
+        }
+        $path = wp_parse_url( $url, PHP_URL_PATH );
         if ( ! is_string( $path ) || '' === $path ) {
             return '';
         }
@@ -1374,6 +1403,15 @@ class EasyOpt_LCP {
             $fh = wp_parse_url( $flux, PHP_URL_HOST );
             if ( ! empty( $fh ) ) {
                 $allowed[] = $fh;
+            }
+        }
+        // (2.7.2) Cloud Optimization, same reason. Missing until now, so with
+        // the CDN connected every LCP report was rejected and the table
+        // stayed empty site-wide.
+        if ( class_exists( 'EasyOpt_CDN_Cloud' ) && EasyOpt_CDN_Cloud::is_connected() ) {
+            $ch = wp_parse_url( (string) EasyOpt_CDN_Cloud::endpoint(), PHP_URL_HOST );
+            if ( ! empty( $ch ) ) {
+                $allowed[] = $ch;
             }
         }
 

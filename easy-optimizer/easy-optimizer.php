@@ -3,7 +3,7 @@
  * Plugin Name: Easy Optimizer – PageSpeed, Cache & Core Web Vitals
  * Plugin URI:  https://fluxpress.io
  * Description: Page cache, lazy load, used CSS, delay JS, font optimization, image CDN, LCP preload and more — everything you need to ace Core Web Vitals, in one plugin.
- * Version:     2.7.1
+ * Version:     2.7.2
  * Author:      FluxPress
  * Author URI:  https://fluxpress.io
  * Text Domain: easy-optimizer
@@ -24,7 +24,7 @@ if ( ! defined( 'EASYOPT_PLUGIN_FILE' ) ) {
     define( 'EASYOPT_PLUGIN_FILE', __FILE__ );
 }
 if ( ! defined( 'EASYOPT_VERSION' ) ) {
-    define( 'EASYOPT_VERSION', '2.7.1' );
+    define( 'EASYOPT_VERSION', '2.7.2' );
 }
 if ( ! defined( 'EASYOPT_CSS_LOGIC_VERSION' ) ) {
     // (2.5.0 / A2) Last plugin version in which the Used-CSS strip/keep/
@@ -36,7 +36,10 @@ if ( ! defined( 'EASYOPT_CSS_LOGIC_VERSION' ) ) {
     // (2.6.4) CSS parser swapped sabberworm → EasyOpt_CSS_Tokenizer. Output can
     // differ (native nesting now preserved instead of dropped), so bump to force
     // a one-time Used-CSS regeneration on update.
-    define( 'EASYOPT_CSS_LOGIC_VERSION', '2.6.4' );
+    // (2.7.2) Tokenizer now honours `\` escapes; 2.7.1 cut a stylesheet off at
+    // the first escaped quote (Tailwind `bg-\[url\(\'…`), so existing .used.css
+    // files are missing rules and must be rebuilt.
+    define( 'EASYOPT_CSS_LOGIC_VERSION', '2.7.2' );
 }
 if ( ! defined( 'EASYOPT_DIR' ) ) {
     define( 'EASYOPT_DIR', plugin_dir_path( EASYOPT_PLUGIN_FILE ) );
@@ -595,16 +598,6 @@ final class Easy_Optimizer {
         add_filter( 'body_class', array( $this, 'add_noojs_body_class' ) );
         add_action( 'wp_footer', array( $this, 'print_noojs_remover' ), 99 );
 
-        // (2.7.1) Cloud Unused CSS reveal. When Unused CSS is enabled via
-        // the Smart Images add-on, the full stylesheets are held as
-        // data-easyopt-delayed (the used-CSS is inlined). This swaps them
-        // back in. When Delay JS is on it is emitted as an easyoptscript so
-        // it runs on first interaction rather than blocking load.
-        // Priority 9999 so the reveal is the last thing in the footer — it runs
-        // after every stylesheet link exists. Emitted only when the Unused CSS
-        // cloud option (easyopt_cloud_unused_css) is on; see the method.
-        add_action( 'wp_footer', array( $this, 'print_cloud_ucss_reveal' ), 9999 );
-
         // Output processing — open our capture buffer as the OUTERMOST
         // userland buffer (on plugins_loaded, before the theme loads and
         // before any rendering-stage buffers). Being outermost is what makes
@@ -748,6 +741,42 @@ final class Easy_Optimizer {
     }
 
     /**
+     * (2.7.2) Guarantee `noojs` on <body> in the final HTML.
+     *
+     * The body_class filter only works for themes that call body_class(); a
+     * theme that hard-codes `<body class="home page">` (sjoymachinery.com's
+     * zeroy) never runs it, so the remover printed in the footer had nothing
+     * to remove and `body.noojs` CSS never applied. Added only when that
+     * remover is in the page — otherwise the class could never be dropped —
+     * and never twice.
+     *
+     * @param string $html
+     * @return string
+     */
+    public static function ensure_noojs_class( $html ) {
+        if ( ! is_string( $html ) || false === strpos( $html, '__eoNoojs' ) ) {
+            return $html;
+        }
+        // Search past </head> so a "<body" inside a head script is never hit.
+        $from = stripos( $html, '</head>' );
+        if ( ! preg_match( '/<body\b[^>]*>/i', $html, $m, PREG_OFFSET_CAPTURE, false === $from ? 0 : $from ) ) {
+            return $html;
+        }
+        $tag = $m[0][0];
+        if ( preg_match( '/\sclass\s*=\s*(?:(["\'])(.*?)\1|([^\s>"\']+))/is', $tag, $c ) ) {
+            $val = isset( $c[3] ) && '' !== $c[3] ? $c[3] : $c[2];
+            if ( preg_match( '/(?:^|\s)noojs(?:\s|$)/', $val ) ) {
+                return $html;
+            }
+            $q   = '' !== $c[1] ? $c[1] : '"';
+            $new = str_replace( $c[0], ' class=' . $q . trim( $val . ' noojs' ) . $q, $tag );
+        } else {
+            $new = substr( $tag, 0, 5 ) . ' class="noojs"' . substr( $tag, 5 );
+        }
+        return substr_replace( $html, $new, $m[0][1], strlen( $tag ) );
+    }
+
+    /**
      * Print the inline "noojs" remover in the footer.
      *
      * Hardened for sites with broken output buffering / duplicated footers:
@@ -763,37 +792,6 @@ final class Easy_Optimizer {
      * is on it is delayed and the class drops when delayed JS runs; when off it
      * drops on the normal DOMContentLoaded.
      */
-    /**
-     * Reveal delayed stylesheets when Unused CSS is on via the cloud add-on.
-     *
-     * Emitted as type="easyoptscript" when Delay JS is active so the Delay JS
-     * runtime executes it on first interaction; as a normal inline script
-     * otherwise. Same front-end guards as the noojs remover.
-     */
-    public function print_cloud_ucss_reveal() {
-        static $done = false;
-        if ( $done ) {
-            return;
-        }
-        if ( ! (int) EasyOpt_Config::get( 'easyopt_cloud_unused_css', 0 ) ) {
-            return;
-        }
-        if ( is_admin()
-            || is_feed()
-            || is_embed()
-            || is_404()
-            || ( function_exists( 'wp_doing_ajax' ) && wp_doing_ajax() )
-            || ( defined( 'REST_REQUEST' ) && REST_REQUEST )
-            || ( function_exists( 'wp_is_json_request' ) && wp_is_json_request() ) ) {
-            return;
-        }
-        $done = true;
-
-        $type = (int) EasyOpt_Config::get( 'easyopt_delay_js', 0 ) ? ' type="easyoptscript"' : '';
-        echo '<script' . $type . '>document.querySelectorAll("link[data-easyopt-delayed]").forEach(function(e){e.setAttribute("href",e.getAttribute("data-easyopt-delayed"));e.removeAttribute("data-easyopt-delayed")});</script>' . "
-"; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
-    }
-
     public function print_noojs_remover() {
 
         static $done = false;
@@ -1204,6 +1202,7 @@ final class Easy_Optimizer {
                 // rewritten into a delayed script, and after the lazy pass,
                 // which is what decides whether it is needed at all.
                 $buffer = $this->maybe_inject_lazy_runtime( $buffer );
+                $buffer = self::ensure_noojs_class( $buffer );
             }
 
             // Page cache — final step. Writes the fully-processed HTML to disk
@@ -1312,6 +1311,7 @@ final class Easy_Optimizer {
                 // rewritten into a delayed script, and after the lazy pass,
                 // which is what decides whether it is needed at all.
                 $buffer = $this->maybe_inject_lazy_runtime( $buffer );
+                $buffer = self::ensure_noojs_class( $buffer );
             }
         } catch ( \Throwable $e ) {
             if ( class_exists( 'EasyOpt_Debug_Log' ) ) {

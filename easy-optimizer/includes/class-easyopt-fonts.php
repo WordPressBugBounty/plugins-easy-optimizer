@@ -129,16 +129,23 @@ class EasyOpt_Fonts {
 
         $af = self::get_af_signature( $type );
 
-        // FAIL-SAFE: no measurement yet → keep all fonts, preload nothing.
-        if ( empty( $af ) ) {
-            return $css;
-        }
-
         // Manual keeps from the Exclude Fonts setting (family or URL fragment).
         $manual      = array();
         $exclude_raw = EasyOpt_Config::get( 'fonts_exclude', '' );
         if ( '' !== $exclude_raw ) {
             $manual = array_filter( array_map( 'trim', explode( "\n", (string) $exclude_raw ) ) );
+        }
+
+        if ( empty( $af ) ) {
+            // (2.7.2) Cloud Optimization: no measurement yet → ship NO fonts
+            // (icon fonts included) instead of all of them. The delayed full
+            // stylesheets still bring every font in at first interaction; once
+            // the beacon reports, only the above-the-fold ones are injected.
+            if ( $do_lazyload && self::strip_until_measured() ) {
+                return self::strip_all_font_faces( $css, $manual );
+            }
+            // FAIL-SAFE: no measurement yet → keep all fonts, preload nothing.
+            return $css;
         }
 
         $preload      = array();
@@ -196,15 +203,65 @@ class EasyOpt_Fonts {
             return $css; // inject unchanged; we only needed the preload set
         }
 
-        // Remove @import rules that reference font providers (those load late).
-        $out = preg_replace(
+        return self::strip_font_imports( $out );
+    }
+
+    /**
+     * (2.7.2) Cloud-only font mode: strip every font until the beacon has
+     * measured this type, rather than keeping every font until it has.
+     * Scoped to sites Cloud Optimization is actively delivering for; free and
+     * lapsed sites keep the fail-safe keep-all behaviour.
+     *
+     * @return bool
+     */
+    public static function strip_until_measured() {
+        return class_exists( 'EasyOpt_CDN_Cloud' ) && EasyOpt_CDN_Cloud::is_entitled();
+    }
+
+    /**
+     * Drop every @font-face block (and font-provider @imports). A block that
+     * matches an Exclude Fonts entry is the user's explicit keep and stays.
+     *
+     * @param string   $css
+     * @param string[] $manual Exclude Fonts entries.
+     * @return string
+     */
+    private static function strip_all_font_faces( $css, $manual ) {
+        $out = '';
+        $len = strlen( $css );
+        $pos = 0;
+        while ( $pos < $len ) {
+            $at = stripos( $css, '@font-face', $pos );
+            if ( false === $at ) {
+                $out .= substr( $css, $pos );
+                break;
+            }
+            $out  .= substr( $css, $pos, $at - $pos );
+            $close = strpos( $css, '}', $at );
+            if ( false === $close ) {
+                $out .= substr( $css, $at );
+                break;
+            }
+            $block = substr( $css, $at, $close - $at + 1 );
+            foreach ( $manual as $needle ) {
+                if ( '' !== $needle && false !== stripos( $block, $needle ) ) {
+                    $out .= $block;
+                    break;
+                }
+            }
+            $pos = $close + 1;
+        }
+        return self::strip_font_imports( $out );
+    }
+
+    /** Remove @import rules that reference font providers (those load late). */
+    private static function strip_font_imports( $css ) {
+        $css = preg_replace(
             '/@import\s+(?:url\()?[\'"]?[^\'")]*(?:fonts\.|font-awesome|googleapis\.com\/css|typekit|fontello|icomoon)[^\'")]*[\'"]?\)?\s*;?/i',
             '',
-            $out
+            $css
         );
-        $out = preg_replace( "/\n\s*\n+/", "\n", $out );
-
-        return $out;
+        return preg_replace( "/\n\s*\n+/", "\n", $css );
     }
 
     /**
@@ -502,6 +559,7 @@ class EasyOpt_Fonts {
         $parts[] = (string) EasyOpt_Config::get( 'unused_css_behavior', 'delayed' );
         $parts[] = (int) EasyOpt_Config::get( 'easyopt_preload_fonts', 0 );
         $parts[] = md5( (string) EasyOpt_Config::get( 'fonts_exclude', '' ) );
+        $parts[] = self::strip_until_measured() ? 'strip0' : 'keep0'; // (2.7.2) unmeasured-type mode
         return implode( '|', $parts );
     }
 
@@ -605,7 +663,7 @@ class EasyOpt_Fonts {
 
     /**
      * Store ATF fonts reported by the beacon. Keeps only same-origin / known
-     * font-host woff2|woff URLs, in priority order, capped at 3. Never purges.
+     * font-host woff2|woff URLs, in priority order, capped at 3. Purges only the reporting page.
      *
      * @param string       $type
      * @param string|array $raw  Comma-separated string or array of font URLs.
@@ -688,6 +746,14 @@ class EasyOpt_Fonts {
         // after upgrade, leaving the beacon collecting forever.
         if ( is_file( $file )
             && self::af_equal( self::get_af_signature( $type, $viewport ), $af ) ) {
+            // (2.7.2) A report means this page was rendered BEFORE the type was
+            // measured. In the cloud strip mode that cached copy has no fonts
+            // at all, so refresh it now rather than at TTL. Other pages of a
+            // shared type heal the same way, each on its first report.
+            if ( '' !== (string) $page_url && self::strip_until_measured()
+                && class_exists( 'EasyOpt_Cache' ) && method_exists( 'EasyOpt_Cache', 'clear_learned_url' ) ) {
+                EasyOpt_Cache::clear_learned_url( $page_url );
+            }
             return;
         }
 

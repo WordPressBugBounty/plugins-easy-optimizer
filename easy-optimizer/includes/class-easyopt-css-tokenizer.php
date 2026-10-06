@@ -114,6 +114,7 @@ class EasyOpt_CSS_Tokenizer {
                 $i += 2;
                 continue;
             }
+            if ( '\\' === $c ) { $i += 2; continue; } // escaped char is never structure
             if ( '"' === $c || "'" === $c ) { self::consume_string( $css, $i, $n ); continue; }
             if ( '{' === $c ) { $depth++; $i++; continue; }
             if ( '}' === $c ) { $depth--; if ( $depth < 0 ) { $needs_fix = true; $depth = 0; } $i++; continue; }
@@ -135,6 +136,7 @@ class EasyOpt_CSS_Tokenizer {
                 $out .= substr( $css, $start, $i - $start );
                 continue;
             }
+            if ( '\\' === $c ) { $out .= substr( $css, $i, 2 ); $i += 2; continue; }
             if ( '"' === $c || "'" === $c ) { $out .= self::consume_string( $css, $i, $n ); continue; }
             if ( '{' === $c ) { $depth++; $out .= '{'; $i++; continue; }
             if ( '}' === $c ) {
@@ -182,6 +184,16 @@ class EasyOpt_CSS_Tokenizer {
                 if ( $i < $n ) {
                     $i += 2;
                 }
+                continue;
+            }
+
+            // Escape — `\` and the escaped char are one literal unit. Tailwind
+            // arbitrary values (`.bg-\[url\(\'\/x.png\'\)\]`) escape quotes,
+            // parens and braces in selectors; reading that `\'` as a string
+            // opener swallowed the rest of the stylesheet.
+            if ( '\\' === $c && $i + 1 < $n ) {
+                $buffer .= $c . $s[ $i + 1 ];
+                $i      += 2;
                 continue;
             }
 
@@ -340,6 +352,13 @@ class EasyOpt_CSS_Tokenizer {
                     $out .= '*/';
                     $i   += 2;
                 }
+                continue;
+            }
+
+            // Escape — literal unit (see parse_list).
+            if ( '\\' === $c && $i + 1 < $n ) {
+                $out .= $c . $s[ $i + 1 ];
+                $i   += 2;
                 continue;
             }
 
@@ -540,6 +559,14 @@ class EasyOpt_CSS_Tokenizer {
             if ( self::is_space( $c ) ) {
                 $pending_ws = true;
                 $i++;
+                continue;
+            }
+
+            // Escape → verbatim literal unit (see parse_list).
+            if ( '\\' === $c && $i + 1 < $n ) {
+                self::flush_ws( $out, $pending_ws );
+                $out .= $c . $s[ $i + 1 ];
+                $i   += 2;
                 continue;
             }
 
@@ -807,6 +834,13 @@ class EasyOpt_CSS_Tokenizer {
         while ( $i < $n ) {
             $c = $str[ $i ];
 
+            // Escaped char (`\,` `\(` `\[` `\'`) is literal — never a separator,
+            // bracket or string opener.
+            if ( '\\' === $c && $i + 1 < $n ) {
+                $buf .= $c . $str[ $i + 1 ];
+                $i   += 2;
+                continue;
+            }
             if ( '"' === $c || "'" === $c ) {
                 $buf .= self::consume_string( $str, $i, $n );
                 continue;
@@ -879,6 +913,12 @@ class EasyOpt_CSS_Tokenizer {
                 'tags'     => array(),
                 'atts'     => array(),
             );
+            // (2.7.2) Unescaped text (`.md\:hidden` → `.md:hidden`) for the
+            // Excluded CSS Selectors match — people type the class as written
+            // in their HTML, never in CSS-escaped form. Only when it differs.
+            if ( false !== strpos( $data['selector'], '\\' ) ) {
+                $data['plain'] = self::css_unescape( $data['selector'] );
+            }
 
             $sel = preg_replace( '/(?<!\\\\)::?[a-zA-Z0-9_-]+(\(.+?\))?/', '', $selector );
 
@@ -891,10 +931,13 @@ class EasyOpt_CSS_Tokenizer {
                 $sel
             );
 
+            // A hex escape (`\2c ` = ',') owns ONE trailing whitespace char, so
+            // it is matched before the single-char escape or the class would be
+            // cut at that space. Unescaped to the literal class the DOM carries.
             $sel = preg_replace_callback(
-                '/\.((?:[a-zA-Z0-9_-]+|\\\\.)+)/',
+                '/\.((?:[a-zA-Z0-9_-]+|\\\\[0-9a-fA-F]{1,6}[ \t\n\r\f]?|\\\\.)+)/',
                 function ( $m ) use ( &$data ) {
-                    $data['classes'][] = stripslashes( $m[1] );
+                    $data['classes'][] = self::css_unescape( $m[1] );
                     return '';
                 },
                 $sel
@@ -951,6 +994,24 @@ class EasyOpt_CSS_Tokenizer {
     /* ───────────────────────────────────────────────
      *  Tiny helpers
      * ─────────────────────────────────────────────── */
+
+    /** CSS identifier unescape: `\2c ` → ',', `\:` → ':'. */
+    private static function css_unescape( $s ) {
+        return preg_replace_callback(
+            '/\\\\(?:([0-9a-fA-F]{1,6})[ \t\n\r\f]?|(.))/s',
+            function ( $m ) {
+                if ( isset( $m[2] ) && '' !== $m[2] ) {
+                    return $m[2];
+                }
+                $cp = hexdec( $m[1] );
+                if ( 0 === $cp || $cp > 0x10FFFF || ( $cp >= 0xD800 && $cp <= 0xDFFF ) ) {
+                    return "\u{FFFD}";
+                }
+                return function_exists( 'mb_chr' ) ? (string) mb_chr( $cp, 'UTF-8' ) : ( $cp < 128 ? chr( $cp ) : '' );
+            },
+            $s
+        );
+    }
 
     private static function is_space( $c ) {
         return ' ' === $c || "\t" === $c || "\n" === $c || "\r" === $c || "\f" === $c || "\v" === $c;

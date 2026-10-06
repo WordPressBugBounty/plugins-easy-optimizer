@@ -323,9 +323,19 @@
 			if (el && isVisible(el) && size >= (cfg.minLcpSize || 10000)) {
 				var r = resolveLcp(el);
 				var url = r && r.url ? r.url : (lcpEntry.url || '');
-				if (r && url) {
+				var kind = r ? r.kind : '';
+				// (2.7.2) No image to preload — still report it, so the server
+				// records the page as measured and stops asking. A poster-less
+				// <video> sends its source (for matching only, never preloaded);
+				// text and anything else image-less send 'none'.
+				if (r && 'video' === r.kind) {
+					url = el.currentSrc || url;
+				} else if (r && !url) {
+					kind = 'none';
+				}
+				if (r && (url || 'none' === kind)) {
 					data.append('element_tag', r.tag);
-					data.append('element_kind', r.kind);
+					data.append('element_kind', kind);
 					data.append('image_url', url);
 					data.append('srcset', r.srcset || '');
 					data.append('sizes', r.sizes || '');

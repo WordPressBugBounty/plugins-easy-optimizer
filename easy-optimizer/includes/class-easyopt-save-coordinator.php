@@ -61,6 +61,7 @@ class EasyOpt_Save_Coordinator {
         'easyopt_unused_css_exclude_stylesheets',
         'easyopt_unused_css_exclude_urls',
         'easyopt_unused_css_include_inline',
+        'easyopt_unused_css_passthrough_stylesheets', // (2.7.2)
         'easyopt_lazy_images',
         'easyopt_lazy_iframes',
         'easyopt_lazy_videos',
@@ -68,11 +69,21 @@ class EasyOpt_Save_Coordinator {
         'easyopt_dims_exclude',
         'easyopt_lazyload_exclude',
         'easyopt_lazyload_exclude_first',
+        'easyopt_lazy_native',             // (2.7.2) native vs JS markup
         'easyopt_font_display_swap',
+        'easyopt_preload_fonts',           // (2.7.2) font preload links
         'easyopt_lazyload_fonts',
         'easyopt_fonts_exclude',
         'easyopt_fonts_exclude_urls',
         'easyopt_img_opt',
+        // (2.7.2) Cloud toggles change the served HTML too (CDN asset URLs,
+        // the delayed-styles loader variant, the font strip) — a Settings
+        // flip must not wait for the page cache to expire.
+        'easyopt_cloud_assets',
+        'easyopt_cloud_unused_css',
+        'easyopt_cloud_assets_exclude',    // (2.7.2)
+        'easyopt_images_picture',          // (2.7.2) <picture> AVIF/WebP markup
+        'easyopt_preconnect',              // (2.7.2) resource hints
         'easyopt_image_exclude',
         'easyopt_elementor_bg_cdn',
         'easyopt_fluxcdn_api_key',
@@ -111,6 +122,7 @@ class EasyOpt_Save_Coordinator {
         'easyopt_unused_css_exclude_urls',
         'easyopt_unused_css_include_inline',
         'easyopt_unused_css_post_types_only',
+        'easyopt_unused_css_passthrough_stylesheets', // (2.7.2) copied whole vs tree-shaken
     );
 
     /** Deferred operations queued from the save listener, drained at shutdown. */
