@@ -132,6 +132,17 @@ class EasyOpt_Rest_Dashboard {
             'callback' => array( __CLASS__, 'images_restore' ),
         ) + $admin );
 
+        register_rest_route( self::NS, '/images/stop', array(
+            'methods'  => 'POST',
+            'callback' => array( __CLASS__, 'images_stop' ),
+        ) + $admin );
+
+        // One image, from the Media Library: { id, do: restore|optimize }.
+        register_rest_route( self::NS, '/images/item', array(
+            'methods'  => 'POST',
+            'callback' => array( __CLASS__, 'images_item' ),
+        ) + $admin );
+
         // ── Cloudflare ───────────────────────────────────────────────
         register_rest_route( self::NS, '/cloudflare/test', array(
             'methods'  => 'POST',
@@ -1130,9 +1141,6 @@ class EasyOpt_Rest_Dashboard {
 
     /** Cached bandwidth usage for the connected license (panel usage bar). */
     public static function fluxcdn_usage( $request = null ) {
-        if ( class_exists( 'EasyOpt_Tracker' ) ) {
-            EasyOpt_Tracker::smartimg_tab_viewed(); // daily-throttled inside
-        }
         $force = $request && (bool) $request->get_param( 'force' );
         $u = class_exists( 'EasyOpt_CDN' ) ? EasyOpt_CDN::usage_status( $force ) : null;
         $u = is_array( $u ) ? $u : array( 'used_bytes' => 0, 'quota_bytes' => 0 );
@@ -1147,12 +1155,6 @@ class EasyOpt_Rest_Dashboard {
         $input      = sanitize_text_field( (string) $request->get_param( 'api_key' ) );
         $endpoint   = ''; // filled from provisioning (per-customer zone hostname)
         $skip_probe = (bool) $request->get_param( 'skip_probe' );
-
-        if ( class_exists( 'EasyOpt_Tracker' ) ) {
-            EasyOpt_Tracker::smartimg_connect_attempted(
-                null === EasyOpt_CDN::parse_key( $input ) ? 'license' : 'key'
-            );
-        }
 
         $license_key   = '';
         $activation_id = '';
@@ -1526,6 +1528,46 @@ class EasyOpt_Rest_Dashboard {
                     $n
                 )
                 : __( 'Nothing to restore.', 'easy-optimizer' ),
+        ) );
+    }
+
+    public static function images_stop() {
+        if ( ! class_exists( 'EasyOpt_Images' ) ) {
+            return new WP_Error( 'easyopt_no_images', 'Image module not loaded.', array( 'status' => 500 ) );
+        }
+        EasyOpt_Images::stop();
+        return rest_ensure_response( array(
+            'success' => true,
+            'message' => __( 'Stopped. Images already done stay optimized.', 'easy-optimizer' ),
+        ) );
+    }
+
+    public static function images_item( $request ) {
+        if ( ! class_exists( 'EasyOpt_Images' ) ) {
+            return new WP_Error( 'easyopt_no_images', 'Image module not loaded.', array( 'status' => 500 ) );
+        }
+        $id = (int) $request->get_param( 'id' );
+        $do = (string) $request->get_param( 'do' );
+        if ( $id <= 0 || 'attachment' !== get_post_type( $id )
+            || ! in_array( (string) get_post_mime_type( $id ), EasyOpt_Images::MIME, true )
+            || ! in_array( $do, array( 'restore', 'optimize' ), true ) ) {
+            return new WP_Error( 'easyopt_bad_image', __( 'Not an image this optimizer handles.', 'easy-optimizer' ), array( 'status' => 400 ) );
+        }
+        $queued = false;
+        if ( 'restore' === $do ) {
+            EasyOpt_Images::restore_one( $id );
+        } else {
+            if ( ! EasyOpt_Images::target_formats() ) {
+                return rest_ensure_response( array(
+                    'success' => false,
+                    'message' => EasyOpt_Images_Capability::summary(),
+                ) );
+            }
+            $queued = EasyOpt_Images::optimize_one( $id );
+        }
+        return rest_ensure_response( array(
+            'success' => true,
+            'html'    => EasyOpt_Images_Media::status_html( $id, $queued ),
         ) );
     }
 }

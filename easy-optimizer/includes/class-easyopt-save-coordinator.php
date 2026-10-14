@@ -104,6 +104,7 @@ class EasyOpt_Save_Coordinator {
         'easyopt_a11y_inputs', 'easyopt_a11y_links', 'easyopt_a11y_buttons',
         'easyopt_a11y_viewport', 'easyopt_a11y_role_elements',
         'easyopt_a11y_iframes', 'easyopt_a11y_progressbar', 'easyopt_a11y_tabindex',
+        'easyopt_a11y_skip_link', 'easyopt_a11y_main_landmark',
         'easyopt_seo_crawlable_links', 'easyopt_seo_image_alts',
     );
 

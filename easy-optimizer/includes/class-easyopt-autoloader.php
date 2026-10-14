@@ -58,6 +58,7 @@ if ( ! class_exists( 'EasyOpt_Autoloader' ) ) {
             'EasyOpt_Images_Capability'    => 'includes/class-easyopt-images-capability.php',
             'EasyOpt_Images_Delivery'      => 'includes/class-easyopt-images-delivery.php',
             'EasyOpt_Images_Encoder'       => 'includes/class-easyopt-images-encoder.php',
+            'EasyOpt_Images_Media'         => 'includes/class-easyopt-images-media.php',
             'EasyOpt_Config'               => 'includes/class-easyopt-config.php',
             'EasyOpt_CSS_Tokenizer'        => 'includes/class-easyopt-css-tokenizer.php',
             'EasyOpt_DB_Snapshot'          => 'includes/class-easyopt-db-snapshot.php',

@@ -55,10 +55,56 @@ class EasyOpt_REST_Cloud {
 		// moment later. Client sites have no system cron — an admin visit is
 		// the trigger, which is exactly when freshness matters.
 		add_action( 'admin_init', array( __CLASS__, 'arm_maintenance' ), 30 );
+		add_action( 'template_redirect', array( __CLASS__, 'arm_frontend_check' ) );
 		add_action( 'easyopt_cloud_maintain', array( 'EasyOpt_CDN_Cloud', 'maintain' ) );
 		if ( ! wp_next_scheduled( 'easyopt_cloud_maintain' ) ) {
 			wp_schedule_event( time() + 900, 'hourly', 'easyopt_cloud_maintain' );
 		}
+	}
+
+	/** (2.7.3) Status-check age after which a front-end request steps in. */
+	const FRONTEND_CHECK_AFTER = 3 * HOUR_IN_SECONDS;
+
+	/**
+	 * (2.7.3) Status check for sites whose WP-Cron never runs.
+	 *
+	 * The hourly check is how a site learns its licence was revoked; with no
+	 * cron and no admin visits it never runs, so the site keeps emitting CDN
+	 * URLs and the edge 302s every asset back to origin — an extra round trip
+	 * per file, for good. When the last check is over 3 hours old, the next
+	 * front-end page view runs it AFTER the response has been sent, so the
+	 * visitor never waits. Hosts that cannot finish a response early (no
+	 * PHP-FPM or LiteSpeed) are left exactly as before.
+	 *
+	 * Cost on every other page view: two autoloaded option reads.
+	 */
+	public static function arm_frontend_check() {
+		// Settings read first: sites that never connected must not autoload
+		// the 40 KB cloud class on every page view for this.
+		if ( '' === (string) EasyOpt_Config::get( 'cloud_account', '' ) || ! EasyOpt_CDN_Cloud::is_connected() ) {
+			return;
+		}
+		if ( time() - (int) get_option( EasyOpt_CDN_Cloud::CHECKED_OPTION, 0 ) < self::FRONTEND_CHECK_AFTER ) {
+			return;
+		}
+		if ( ! function_exists( 'fastcgi_finish_request' ) && ! function_exists( 'litespeed_finish_request' ) ) {
+			return;
+		}
+		// Last on shutdown: the page (and Easy Optimizer's cache write, on
+		// wp_ob_end_flush_all at priority 1) is already done.
+		add_action( 'shutdown', array( __CLASS__, 'frontend_check' ), PHP_INT_MAX );
+	}
+
+	/** Hand the page to the visitor, then ask for the status. */
+	public static function frontend_check() {
+		if ( function_exists( 'fastcgi_finish_request' ) ) {
+			fastcgi_finish_request();
+		} elseif ( function_exists( 'litespeed_finish_request' ) ) {
+			litespeed_finish_request();
+		} else {
+			return;
+		}
+		EasyOpt_CDN_Cloud::check_now();
 	}
 
 	/**

@@ -3,7 +3,7 @@
  * Plugin Name: Easy Optimizer – PageSpeed, Cache & Core Web Vitals
  * Plugin URI:  https://fluxpress.io
  * Description: Page cache, lazy load, used CSS, delay JS, font optimization, image CDN, LCP preload and more — everything you need to ace Core Web Vitals, in one plugin.
- * Version:     2.7.2
+ * Version:     2.7.3
  * Author:      FluxPress
  * Author URI:  https://fluxpress.io
  * Text Domain: easy-optimizer
@@ -24,7 +24,7 @@ if ( ! defined( 'EASYOPT_PLUGIN_FILE' ) ) {
     define( 'EASYOPT_PLUGIN_FILE', __FILE__ );
 }
 if ( ! defined( 'EASYOPT_VERSION' ) ) {
-    define( 'EASYOPT_VERSION', '2.7.2' );
+    define( 'EASYOPT_VERSION', '2.7.3' );
 }
 if ( ! defined( 'EASYOPT_CSS_LOGIC_VERSION' ) ) {
     // (2.5.0 / A2) Last plugin version in which the Used-CSS strip/keep/
@@ -465,7 +465,8 @@ if ( ! empty( $easyopt_opts['easyopt_instant_preload'] ) ) {
 // Accessibility & SEO — check any toggle
 $a11y_keys = array( 'easyopt_a11y_inputs', 'easyopt_a11y_links', 'easyopt_a11y_buttons',
     'easyopt_a11y_viewport', 'easyopt_a11y_role_elements', 'easyopt_a11y_iframes',
-    'easyopt_a11y_progressbar', 'easyopt_a11y_tabindex' );
+    'easyopt_a11y_progressbar', 'easyopt_a11y_tabindex',
+    'easyopt_a11y_skip_link', 'easyopt_a11y_main_landmark' );
 foreach ( $a11y_keys as $ak ) {
     if ( ! empty( $easyopt_opts[ $ak ] ) ) {
         $easyopt_conditional[] = 'class-easyopt-accessibility.php';
@@ -1041,6 +1042,7 @@ final class Easy_Optimizer {
         // A11y + SEO toggles
         $a11y = array( 'a11y_inputs', 'a11y_links', 'a11y_buttons', 'a11y_viewport',
                        'a11y_role_elements', 'a11y_iframes', 'a11y_progressbar', 'a11y_tabindex',
+                       'a11y_skip_link', 'a11y_main_landmark',
                        'seo_crawlable_links', 'seo_image_alts' );
         $checks = array_merge( $checks, $a11y );
         foreach ( $checks as $k ) {

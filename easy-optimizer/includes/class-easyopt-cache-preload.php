@@ -1089,6 +1089,9 @@ class EasyOpt_Cache_Preload {
         // the queue watchdog cron — no new schedule. One option read + write
         // per minute; logs only when the queue stalls or grows abnormally.
         add_action( 'easyopt_queue_watchdog', array( __CLASS__, 'watchdog_health_check' ) );
+        // (2.7.3) The watchdog is only scheduled while there is work now; keep
+        // it ticking while the check above still has something to watch.
+        add_filter( 'easyopt_queue_watchdog_keep', array( __CLASS__, 'watchdog_keep' ) );
 
         // Phase 7 — traffic-aware retention. Opt-in stale page-cache pruning on
         // the existing daily GC tick. Disabled by default (TTL 0) so it can
@@ -1137,6 +1140,20 @@ class EasyOpt_Cache_Preload {
      *   - W2: pending unchanged and > 0 for N consecutive ticks → stalled.
      * Cost: one option read + one option write per minute. No filesystem work.
      */
+    /**
+     * (2.7.3) Keep the watchdog scheduled while watchdog_health_check() can
+     * still act: a running or paused run, or the 30 min post-done reconcile.
+     * Same conditions it checks before taking its fast exit.
+     */
+    public static function watchdog_keep( $keep ) {
+        if ( $keep ) {
+            return true;
+        }
+        $status = (string) get_option( 'easyopt_cache_preload_status', 'idle' );
+        return 'running' === $status || 'paused' === $status
+            || ( 'done' === $status && false !== get_transient( 'easyopt_preload_post_done_reconcile' ) );
+    }
+
     public static function watchdog_health_check() {
         if ( ! class_exists( 'EasyOpt_Debug_Log' ) ) {
             return;

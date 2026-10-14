@@ -7,9 +7,9 @@
  *
  * Events sent (only after opt-in):
  *  Lifecycle:    activation, deactivation (+reason), heartbeat, uninstall
- *  Smart Images: smartimg_tab_viewed, smartimg_connect_attempted,
- *                smartimg_delivering, smartimg_fallback (+reason),
- *                smartimg_disconnected
+ *  Smart Images: smartimg_delivering, smartimg_fallback (+reason),
+ *                smartimg_disconnected (tab-view and connect-attempt
+ *                events retired in 2.7.3)
  *  Core health:  wizard_completed (+preset), safe_mode_triggered (+trigger),
  *                error_occurred (+code, throttled 1/code/day)
  *
@@ -71,20 +71,6 @@ class EasyOpt_Tracker {
 
         // Loose-coupling entry point: do_action( 'easyopt_track_error', 'EO_CODE' )
         add_action( 'easyopt_track_error', array( __CLASS__, 'error' ), 10, 2 );
-
-        // Smart Images tab-view ping (fired by a tiny admin script when the
-        // Smart Images tab is opened — connection state irrelevant, so the
-        // TOP of the funnel is measured, not just already-connected sites).
-        add_action( 'rest_api_init', function() {
-            register_rest_route( 'easyopt/v1', '/track/si-view', array(
-                'methods'             => 'POST',
-                'callback'            => function() {
-                    EasyOpt_Tracker::smartimg_tab_viewed();
-                    return rest_ensure_response( array( 'ok' => true ) );
-                },
-                'permission_callback' => function() { return current_user_can( 'manage_options' ); },
-            ) );
-        } );
     }
 
     /* ── Opt-in state ───────────────────────────────────────────────────── */
@@ -243,23 +229,6 @@ class EasyOpt_Tracker {
 
     /* ── Smart Images funnel ────────────────────────────────────────────── */
 
-    /** Smart Images tab opened (throttled to once per day). */
-    public static function smartimg_tab_viewed() {
-        if ( get_transient( 'easyopt_trk_si_tab' ) ) {
-            return;
-        }
-        // Was DAY_IN_SECONDS. Every funnel event downstream of this one is
-        // per-action, and a per-action numerator over a per-site-per-DAY
-        // denominator is not a conversion rate — it made the first row of
-        // the funnel uncomputable.
-        set_transient( 'easyopt_trk_si_tab', 1, HOUR_IN_SECONDS );
-        self::send( 'smartimg_tab_viewed' );
-    }
-
-    /** User submitted a license / key — {mode: license|key}. */
-    public static function smartimg_connect_attempted( $mode = 'license' ) {
-        self::send( 'smartimg_connect_attempted', array( 'mode' => sanitize_key( $mode ) ) );
-    }
 
     /**
      * Probe-state transition. Called from connect / test / reprobe whenever a

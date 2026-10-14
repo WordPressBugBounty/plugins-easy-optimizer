@@ -290,6 +290,7 @@ class EasyOpt_Settings_Registry {
             'easyopt_a11y_inputs', 'easyopt_a11y_links', 'easyopt_a11y_buttons',
             'easyopt_a11y_viewport', 'easyopt_a11y_role_elements', 'easyopt_a11y_iframes',
             'easyopt_a11y_progressbar', 'easyopt_a11y_tabindex',
+            'easyopt_a11y_skip_link', 'easyopt_a11y_main_landmark',
         ) as $k ) {
             $s[ $k ] = array( 'default' => 0 ) + $int_bool;
         }

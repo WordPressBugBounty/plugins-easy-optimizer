@@ -302,6 +302,10 @@ class EasyOpt_LCP {
             'pageUrl'     => $norm_url,
             'mobileBreak' => self::MOBILE_BREAK,
             'minLcpSize'  => self::MIN_LCP_SIZE,
+            // (2.7.3) Render time: the beacon's per-page memory is keyed to
+            // it, so a cached copy is reported once per browser, while a
+            // re-render (e.g. after the data was cleared) reports again.
+            'rendered'    => time(),
             'need'        => array(
                 'lcp'     => $need_lcp ? 1 : 0,
                 'classes' => $need_classes ? 1 : 0,

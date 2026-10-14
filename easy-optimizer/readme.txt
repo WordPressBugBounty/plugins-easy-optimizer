@@ -3,9 +3,9 @@ Contributors: easywpstuff, uzairwp
 Donate link: https://paypal.me/uzairwp
 Tags: performance, cache, pagespeed, core web vitals, speed
 Requires at least: 6.4
-Tested up to: 7.1.3
+Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 2.7.2
+Stable tag: 2.7.3
 License: GNU General Public License v2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -69,6 +69,8 @@ Lighthouse 13 renamed and merged many performance audits. Where the name changed
 * ARIA progressbar elements do not have accessible names
 * Some elements have a [tabindex] value greater than 0
 * Image elements do not have [alt] attributes
+* Skip links are not focusable
+* Document does not have a main landmark
 
 **SEO**
 
@@ -209,6 +211,17 @@ Easy Optimizer's usage analytics are opt-in and disabled by default. When enable
 14. Accessibility & SEO — eight accessibility audit toggles and two SEO audit toggles with clear Lighthouse audit descriptions.
 
 == Changelog ==
+
+= 2.7.3 =
+* New: Restore original or Optimize a single image from the Media Library. A status column in the list view and a row in the image details panel show whether each image is optimized, skipped or restored. An image you restore yourself is left alone by later "Optimize all" runs until you choose Optimize for it again.
+* New: a Stop button for a running image optimization. Images already done stay optimized, and "Optimize remaining" continues from where it stopped.
+* New: two Accessibility fixes, off by default. "Skip links are not focusable" points a "Skip to content" link whose target is missing (common with Elementor full-width layouts) at the page's main content. "Document does not have a main landmark" marks the main content area for screen readers on layouts that have none (Elementor, Divi). Both only add attributes; nothing on the page is moved or removed, and pages that already pass are left unchanged.
+* Fixed: the image optimization progress ("8 of 202 done, 192 to go") now adds up on every refresh. The done count lagged up to 20 seconds behind the to-go count and left out images that were skipped because no smaller copy was possible.
+* Fixed: restoring an image whose original had been resized no longer queues it to be optimized and resized again straight away.
+* Improved: less background load. The every-minute background check now runs only while there is work queued (preload, image optimization), instead of all the time. On hosts where WP-Cron runs off visitor traffic, an idle site no longer starts a background request about once a minute.
+* Improved: a visitor's browser now remembers that it already reported a page's measurements, so a page served from a page cache or CDN is not reported again by the same visitor on later visits. A page rendered again, for example after its data was cleared, still reports.
+* Removed: two usage-statistics events (Smart Images tab viewed, connect attempted) that only opted-in sites sent. They added noise without measuring anything new.
+* Fixed: Cloud Optimization now notices an ended licence even on sites where WP-Cron does not run. Previously such a site kept pointing its files at the CDN, which redirected every file back to the site (an extra round trip each). An overdue status check now runs after a page has been sent to the visitor, so nobody waits for it; on servers that cannot do that, nothing changes.
 
 = 2.7.2 =
 * Fixed: Remove Unused CSS stopped reading a stylesheet partway through when it met a Tailwind arbitrary-value class such as `bg-[url('/hero.png')]`. Every rule after that point was missing from the critical CSS until the visitor interacted, so padding, gradients and image fitting could jump on first paint. Escaped selectors are now read correctly and matched to the classes on the page.
@@ -418,6 +431,9 @@ Easy Optimizer's usage analytics are opt-in and disabled by default. When enable
 * Initial release — lazy load and Image CDN.
 
 == Upgrade Notice ==
+
+= 2.7.3 =
+Adds Restore and Optimize for single images in the Media Library, a Stop button for image optimization, and two optional accessibility fixes (skip links, main landmark). Background checks now run only while work is queued.
 
 = 2.7.2 =
 Fixes Remove Unused CSS dropping rules on Tailwind sites, lazy-loaded <noscript> iframes, and several Cloud Optimization issues (LCP preload, edge-served fonts, the Images toggle). Used CSS is rebuilt once after updating, so expect a short regeneration period.

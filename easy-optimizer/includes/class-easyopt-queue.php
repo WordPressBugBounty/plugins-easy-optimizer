@@ -215,9 +215,19 @@ class EasyOpt_Queue {
         // the schema version matches.
         add_action( 'plugins_loaded', array( __CLASS__, 'maybe_create_table' ), 5 );
 
-        // Watchdog: schedule on init, run on its hook.
+        // Watchdog: run on its hook. (2.7.3) Scheduled only while there is
+        // work: add_task() arms it, run_watchdog() drops it once the queue is
+        // empty, and admin + cron requests re-arm it as a safety net. It used
+        // to be a permanent every-minute event, which on WP-Cron-driven hosts
+        // spawned wp-cron.php about once a minute forever to find nothing.
+        // Front-end and admin-ajax requests (beacons, heartbeat) never check:
+        // the flag it needs is not autoloaded, so checking there would cost a
+        // query per request. Priority 99 so modules that keep it alive
+        // (preload, on init:10) have registered.
         add_filter( 'cron_schedules',          array( __CLASS__, 'register_schedule' ) );
-        add_action( 'init',                    array( __CLASS__, 'setup_watchdog'    ) );
+        if ( ( is_admin() && ! wp_doing_ajax() ) || wp_doing_cron() ) {
+            add_action( 'init',                array( __CLASS__, 'maybe_setup_watchdog' ), 99 );
+        }
         add_action( self::WATCHDOG_HOOK,       array( __CLASS__, 'run_watchdog'      ) );
 
         // Garbage collection: daily cron that purges terminal / orphaned
@@ -322,6 +332,8 @@ class EasyOpt_Queue {
             if ( '1' !== (string) get_option( 'easyopt_queue_active', '' ) ) {
                 update_option( 'easyopt_queue_active', '1', false );
             }
+            // (2.7.3) Work exists: make sure the watchdog is ticking.
+            self::setup_watchdog();
         }
 
         return (int) $wpdb->insert_id;
@@ -534,6 +546,25 @@ class EasyOpt_Queue {
         }
     }
 
+    /** (2.7.3) Re-arm while there is work, drop the event when idle. */
+    public static function maybe_setup_watchdog() {
+        if ( self::watchdog_needed() ) {
+            self::setup_watchdog();
+        } elseif ( wp_next_scheduled( self::WATCHDOG_HOOK ) ) {
+            wp_clear_scheduled_hook( self::WATCHDOG_HOOK );
+        }
+    }
+
+    /**
+     * Does the per-minute tick have anything to do? Queue work (the flag
+     * add_task() raises; missing counts as yes, as in run_watchdog()), or a
+     * module still watching on the tick (preload's health check).
+     */
+    private static function watchdog_needed() {
+        return '0' !== (string) get_option( 'easyopt_queue_active', 'unset' )
+            || (bool) apply_filters( 'easyopt_queue_watchdog_keep', false );
+    }
+
     public static function clear_watchdog() {
         wp_clear_scheduled_hook( self::WATCHDOG_HOOK );
     }
@@ -736,6 +767,7 @@ class EasyOpt_Queue {
         // no in-flight work can ever be stranded.
         $easyopt_active_flag = get_option( 'easyopt_queue_active', 'unset' );
         if ( '0' === (string) $easyopt_active_flag ) {
+            self::maybe_setup_watchdog(); // (2.7.3) idle: stop ticking
             return; // one option read and done.
         }
 
@@ -780,6 +812,14 @@ class EasyOpt_Queue {
             );
             if ( null === $easyopt_any ) {
                 update_option( 'easyopt_queue_active', '0', false );
+                // (2.7.3) About to stop ticking, so close the gap first: a task
+                // queued between the check above and the flag write saw the
+                // flag still up and did not raise it again.
+                if ( null !== $wpdb->get_var( "SELECT 1 FROM $table WHERE status IN ('pending','processing') LIMIT 1" ) ) { // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+                    update_option( 'easyopt_queue_active', '1', false );
+                } else {
+                    self::maybe_setup_watchdog();
+                }
             }
             return;
         }

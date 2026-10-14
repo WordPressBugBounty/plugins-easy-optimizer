@@ -935,12 +935,33 @@ class EasyOpt_CDN_Cloud {
 		// on cron rather than inline on an admin page load — see
 		// EasyOpt_REST_Cloud::arm_maintenance().
 		set_transient( 'easyopt_cloud_maint', 1, 10 * MINUTE_IN_SECONDS );
+		update_option( self::CHECKED_OPTION, time(), true );
 
 		self::usage( true );
 
 		if ( self::is_unpaid() && self::map_is_stale() ) {
 			self::map_refresh( self::collect_originals() );
 		}
+	}
+
+	/**
+	 * (2.7.3) Last time the status was asked for. Autoloaded: it is read on
+	 * front-end requests by EasyOpt_REST_Cloud::arm_frontend_check().
+	 */
+	const CHECKED_OPTION = 'easyopt_cloud_checked_at';
+
+	/**
+	 * (2.7.3) The status check for sites whose WP-Cron never runs — see
+	 * EasyOpt_REST_Cloud::arm_frontend_check(). Same throttle as maintain();
+	 * only the usage call, which is what learns of a revoked licence.
+	 */
+	public static function check_now() {
+		if ( ! self::is_connected() || get_transient( 'easyopt_cloud_maint' ) ) {
+			return;
+		}
+		set_transient( 'easyopt_cloud_maint', 1, 10 * MINUTE_IN_SECONDS );
+		update_option( self::CHECKED_OPTION, time(), true );
+		self::usage( true );
 	}
 
 	/** Cached usage. Returns null when unknown — callers must fail open. */

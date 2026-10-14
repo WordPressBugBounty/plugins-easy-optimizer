@@ -67,34 +67,8 @@ class EasyOpt_Settings {
 
         wp_enqueue_style( 'easyopt-admin', EASYOPT_URL . 'assets/style.css', array(), EASYOPT_VERSION );
 
-        // Smart Images tab-view ping — top-of-funnel measurement. Fires when
-        // the imgopt tab is clicked OR is already the restored tab on load.
-        // Once per page load client-side; the tracker throttles to once per
-        // day server-side, so this is at most one tiny request daily.
-        wp_add_inline_script( 'easyopt-dashboard', "
-(function(){
-    var sent = false;
-    function ping(){
-        if (sent || !window.__EASYOPT__ || !window.__EASYOPT__.restUrl) { return; }
-        sent = true;
-        fetch(window.__EASYOPT__.restUrl.replace(/\\/$/, '') + '/track/si-view', {
-            method: 'POST',
-            headers: { 'X-WP-Nonce': window.__EASYOPT__.restNonce },
-            credentials: 'same-origin'
-        }).catch(function(){});
-    }
-    document.addEventListener('click', function(e){
-        var el = e.target && e.target.closest ? e.target.closest('[data-tab=\"imgopt\"]') : null;
-        if (el) { ping(); }
-    });
-    // Restored-tab case: panel already mounted shortly after load.
-    var tries = 0;
-    var t = setInterval(function(){
-        if (document.getElementById('eop-panel-imgopt')) { ping(); clearInterval(t); }
-        if (++tries > 20) { clearInterval(t); }
-    }, 500);
-})();
-" );
+        // (2.7.3) The Smart Images tab-view ping is gone: it logged a row per
+        // admin per hour and measured nothing analyze_started does not.
     }
 
     public static function render_app() {

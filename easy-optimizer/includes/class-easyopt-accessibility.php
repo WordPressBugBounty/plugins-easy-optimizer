@@ -81,6 +81,12 @@ class EasyOpt_Accessibility {
             $html = self::fix_button_text_fallback( $html );
         }
 
+        // (2.7.3) Skip-link target + main landmark — one shared pass, a no-op
+        // unless the page actually fails one of the two audits.
+        if ( self::$enabled['skip_link'] || self::$enabled['main_landmark'] ) {
+            $html = self::fix_landmarks( $html );
+        }
+
         return $html;
     }
 
@@ -99,6 +105,8 @@ class EasyOpt_Accessibility {
             'iframes'       => (int) EasyOpt_Config::get( 'a11y_iframes', 0 ),
             'progressbar'   => (int) EasyOpt_Config::get( 'a11y_progressbar', 0 ),
             'tabindex'      => (int) EasyOpt_Config::get( 'a11y_tabindex', 0 ),
+            'skip_link'     => (int) EasyOpt_Config::get( 'a11y_skip_link', 0 ),
+            'main_landmark' => (int) EasyOpt_Config::get( 'a11y_main_landmark', 0 ),
         );
 
         // Any enabled?
@@ -354,6 +362,190 @@ class EasyOpt_Accessibility {
         if ( (int) $ti > 0 ) {
             $p->set_attribute( 'tabindex', '0' );
         }
+    }
+
+    /* ─────────────────────────────────────────────
+     *  (2.7.3) Skip-link target + main landmark
+     * ───────────────────────────────────────────── */
+
+    /** data-elementor-type values that hold the page's OWN content — never a header, footer, popup or embedded template. */
+    const CONTENT_DOC_TYPES = array( 'wp-page', 'wp-post', 'single', 'single-post', 'single-page', 'archive', 'search-results', 'error-404', 'product', 'product-archive' );
+
+    /** Landmarks the main content is never inside. Mega menus embed whole Elementor posts in the header. */
+    const OUTSIDE_MAIN_TAGS = array( 'HEADER', 'FOOTER', 'NAV', 'ASIDE' );
+
+    /**
+     * Lighthouse: "Skip links are not focusable" and "Document does not have a
+     * main landmark".
+     *
+     * Page-builder layouts (Elementor full width / canvas / Theme Builder,
+     * Divi) print no <main>, while the theme still prints its "Skip to
+     * content" link to #content — a link to nothing. Both are fixed on one
+     * element, the page's main content block:
+     *
+     *   - the existing <main> / [role=main], else
+     *   - the first Elementor page/post/single/archive document, or Divi's
+     *     #main-content, that is NOT inside a header, footer, nav or aside.
+     *
+     * Only attributes change: role="main" on that block, an id on it when it
+     * has none (easyopt-main — never "content", which themes style), and the
+     * skip link's href pointed at it. Nothing is moved, wrapped or removed; a
+     * page that already passes, or has no recognisable content block, is
+     * returned unchanged.
+     */
+    private static function fix_landmarks( $html ) {
+
+        $has_main  = self::has_main_landmark( $html );
+        $want_main = self::$enabled['main_landmark'] && ! $has_main;
+        $want_skip = self::$enabled['skip_link'] && self::has_broken_skip_link( $html );
+
+        if ( ! $want_main && ! $want_skip ) {
+            return $html;
+        }
+
+        // Nothing to point at → nothing to walk for.
+        if ( ! $has_main && ! preg_match( '#data-elementor-type=["\'](?:' . implode( '|', array_map( 'preg_quote', self::CONTENT_DOC_TYPES ) ) . ')["\']|\sid\s*=\s*["\']?main-content["\'\s>]#', $html ) ) {
+            return $html;
+        }
+
+        $p        = new WP_HTML_Tag_Processor( $html );
+        $outside  = 0;    // Depth inside header / footer / nav / aside.
+        $in_links = true; // Still before the first ordinary page link (where skip links live).
+        $skips    = 0;
+        $found    = false;
+
+        while ( $p->next_tag( array( 'tag_closers' => 'visit' ) ) ) {
+            $tag = $p->get_tag();
+
+            if ( in_array( $tag, self::OUTSIDE_MAIN_TAGS, true ) ) {
+                $outside = $p->is_tag_closer() ? max( 0, $outside - 1 ) : $outside + 1;
+                continue;
+            }
+
+            if ( $p->is_tag_closer() ) {
+                continue;
+            }
+
+            if ( 'A' === $tag ) {
+                if ( $in_links ) {
+                    $href = $p->get_attribute( 'href' );
+                    $href = is_string( $href ) ? trim( $href ) : '';
+
+                    if ( $want_skip && $skips < 5 && self::is_skip_link( $p, $href ) && ! self::target_exists( $html, substr( $href, 1 ) ) ) {
+                        $p->set_bookmark( 'easyopt_skip_' . $skips );
+                        $skips++;
+                    } elseif ( '' !== $href && '#' !== $href[0] && 0 !== stripos( $href, 'javascript:' ) ) {
+                        $in_links = false;
+                    }
+                }
+                continue;
+            }
+
+            if ( self::is_main_block( $p, $tag, $outside ) ) {
+                $found = true;
+                break;
+            }
+        }
+
+        if ( ! $found ) {
+            return $html;
+        }
+
+        if ( $want_main && null === $p->get_attribute( 'role' ) ) {
+            $p->set_attribute( 'role', 'main' );
+        }
+
+        if ( $skips > 0 ) {
+            $id = $p->get_attribute( 'id' );
+            $id = is_string( $id ) ? trim( $id ) : '';
+
+            if ( '' === $id ) {
+                $id = self::unique_id( $html, 'easyopt-main' );
+                $p->set_attribute( 'id', $id );
+            }
+
+            if ( ! preg_match( '/\s/', $id ) ) {
+                for ( $i = 0; $i < $skips; $i++ ) {
+                    if ( $p->seek( 'easyopt_skip_' . $i ) ) {
+                        $p->set_attribute( 'href', '#' . $id );
+                    }
+                }
+            }
+        }
+
+        return $p->get_updated_html();
+    }
+
+    /** A <main> element or role="main" anywhere in the document. */
+    private static function has_main_landmark( $html ) {
+        return (bool) preg_match( '#<main[\s>/]|\srole\s*=\s*["\']?main["\'\s/>]#i', $html );
+    }
+
+    /** Any skip link whose #target does not exist. Cheap gate before the tag walk. */
+    private static function has_broken_skip_link( $html ) {
+        if ( false === stripos( $html, 'skip' )
+            || ! preg_match_all( '#<a\s(?=[^>]*skip)[^>]*?\bhref\s*=\s*["\']?\#([^"\'\s>]+)#i', $html, $m ) ) {
+            return false;
+        }
+
+        foreach ( $m[1] as $fragment ) {
+            if ( '/' !== $fragment[0] && '!' !== $fragment[0] && ! self::target_exists( $html, $fragment ) ) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * A skip link the way the audit sees one: an in-page link (#name, not #/
+     * or #!) — and, so a menu toggle or "back to top" is never repointed, one
+     * that names itself a skip link in its class or id.
+     */
+    private static function is_skip_link( $p, $href ) {
+        if ( strlen( $href ) < 2 || '#' !== $href[0] || '/' === $href[1] || '!' === $href[1] ) {
+            return false;
+        }
+
+        $class = $p->get_attribute( 'class' );
+        $id    = $p->get_attribute( 'id' );
+
+        return ( is_string( $class ) && false !== stripos( $class, 'skip' ) )
+            || ( is_string( $id ) && false !== stripos( $id, 'skip' ) );
+    }
+
+    /** An element with this id (or name, as the audit also accepts) exists. */
+    private static function target_exists( $html, $fragment ) {
+        return (bool) preg_match( '#\s(?:[iI][dD]|[nN][aA][mM][eE])\s*=\s*(["\']?)' . preg_quote( $fragment, '#' ) . '\1(?=[\s/>])#', $html );
+    }
+
+    /** The page's main content block, at the processor's current tag. */
+    private static function is_main_block( $p, $tag, $outside ) {
+        $role = $p->get_attribute( 'role' );
+
+        if ( 'MAIN' === $tag || ( is_string( $role ) && 'main' === strtolower( trim( $role ) ) ) ) {
+            return true;
+        }
+
+        if ( $outside > 0 ) {
+            return false;
+        }
+
+        $type = $p->get_attribute( 'data-elementor-type' );
+
+        if ( is_string( $type ) && in_array( $type, self::CONTENT_DOC_TYPES, true ) ) {
+            return true;
+        }
+
+        return 'main-content' === $p->get_attribute( 'id' );
+    }
+
+    /** $base, or $base-2, -3 … when the document already uses it. */
+    private static function unique_id( $html, $base ) {
+        $id = $base;
+        for ( $n = 2; self::target_exists( $html, $id ) && $n < 50; $n++ ) {
+            $id = $base . '-' . $n;
+        }
+        return $id;
     }
 
     /* ─────────────────────────────────────────────

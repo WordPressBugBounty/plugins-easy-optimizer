@@ -54,6 +54,14 @@ class EasyOpt_Images {
     /** Marker written by the client-side shim when core encoded in-browser. */
     const META_CLIENTSIDE = '_easyopt_img_clientside';
 
+    /**
+     * Set when the user restores ONE image from the Media Library. Bulk runs
+     * leave it alone until they optimize it again — otherwise the next
+     * "Optimize all" would simply redo what they just undid. Kept apart from
+     * META so restore (which deletes META) never clears it.
+     */
+    const META_EXCLUDE = '_easyopt_img_exclude';
+
     /** Queue wiring. */
     const QUEUE_GROUP    = 'images';
     const HOOK_OPTIMIZE  = 'easyopt_image_optimize';
@@ -65,6 +73,9 @@ class EasyOpt_Images {
 
     /** Sources we will process. */
     const MIME = array( 'image/jpeg', 'image/png', 'image/gif' );
+
+    /** True while restore regenerates core's sizes — not a new upload. */
+    private static $restoring = false;
 
     /**
      * Hooks that must exist whether or not the feature is enabled, so that
@@ -99,6 +110,11 @@ class EasyOpt_Images {
         // Auto-optimize new uploads.
         if ( (int) EasyOpt_Config::get( 'easyopt_images_auto', 1 ) ) {
             add_filter( 'wp_generate_attachment_metadata', array( __CLASS__, 'on_generate_metadata' ), 20, 3 );
+        }
+
+        // Per-image status, Restore and Optimize in the Media Library.
+        if ( is_admin() ) {
+            EasyOpt_Images_Media::init();
         }
     }
 
@@ -175,7 +191,9 @@ class EasyOpt_Images {
      * marker instead; see did_client_side().
      */
     public static function on_generate_metadata( $metadata, $attachment_id, $context = 'create' ) {
-        if ( 'create' !== $context ) {
+        // Restore regenerates sizes through this same filter with 'create'.
+        // Queueing then would re-optimize (and re-shrink) what was just restored.
+        if ( 'create' !== $context || self::$restoring ) {
             return $metadata;
         }
         if ( ! in_array( (string) get_post_mime_type( $attachment_id ), self::MIME, true ) ) {
@@ -224,6 +242,8 @@ class EasyOpt_Images {
             }
         }
         if ( $n ) {
+            // Queued images leave the cached "untouched" count (see stats()).
+            delete_transient( self::STATS_CACHE );
             $q->start_queue();
         }
         return $n;
@@ -242,9 +262,21 @@ class EasyOpt_Images {
             }
         }
         if ( $n ) {
+            delete_transient( self::STATS_CACHE );
             $q->start_queue();
         }
         return $n;
+    }
+
+    /**
+     * Stop a bulk run (or a restore-all). Drops every queued task; the image
+     * being encoded right now finishes, and everything already done stays
+     * done. "Optimize N remaining" picks up where it stopped.
+     */
+    public static function stop() {
+        self::queue( self::HOOK_OPTIMIZE )->clear_queue();
+        self::queue( self::HOOK_RESTORE )->clear_queue();
+        delete_transient( self::STATS_CACHE );
     }
 
     /**
@@ -309,7 +341,7 @@ class EasyOpt_Images {
      */
     public static function run_optimize( $task ) {
         $id = isset( $task['id'] ) ? (int) $task['id'] : 0;
-        if ( $id <= 0 ) {
+        if ( $id <= 0 || self::is_excluded( $id ) ) {
             return;
         }
 
@@ -395,6 +427,14 @@ class EasyOpt_Images {
         $meta['saved']       = self::compute_saved( $record );
         $meta['sig']         = self::settings_signature();
         update_post_meta( $id, self::META, $meta );
+
+        // Restored from the Media Library while this encode ran: undo the run
+        // (variants and any shrink) so the user's restore holds. The meta cache
+        // was filled when this run started, so drop it to see the restore.
+        wp_cache_delete( $id, 'post_meta' );
+        if ( self::is_excluded( $id ) ) {
+            self::run_restore( array( 'id' => $id ) );
+        }
     }
 
     /**
@@ -497,7 +537,9 @@ class EasyOpt_Images {
                     if ( ! function_exists( 'wp_generate_attachment_metadata' ) ) {
                         require_once ABSPATH . 'wp-admin/includes/image.php';
                     }
-                    $regenerated = wp_generate_attachment_metadata( $id, $main );
+                    self::$restoring = true;
+                    $regenerated     = wp_generate_attachment_metadata( $id, $main );
+                    self::$restoring = false;
                     if ( is_array( $regenerated ) ) {
                         wp_update_attachment_metadata( $id, $regenerated );
                     }
@@ -508,6 +550,30 @@ class EasyOpt_Images {
         // 3. Forget we were ever here.
         delete_post_meta( $id, self::META );
         delete_post_meta( $id, self::META_CLIENTSIDE );
+    }
+
+    /**
+     * Restore ONE image now (Media Library) and keep bulk runs off it.
+     * Exclusion first, so an encode of this image already in flight sees it
+     * when it finishes and undoes itself (see run_optimize()).
+     */
+    public static function restore_one( $id ) {
+        $id = (int) $id;
+        update_post_meta( $id, self::META_EXCLUDE, 1 );
+        self::run_restore( array( 'id' => $id ) );
+        delete_transient( self::STATS_CACHE );
+    }
+
+    /**
+     * Optimize ONE image (Media Library): lift a restore's exclusion, queue it.
+     *
+     * @return bool Queued.
+     */
+    public static function optimize_one( $id ) {
+        $id = (int) $id;
+        delete_post_meta( $id, self::META_EXCLUDE );
+        delete_transient( self::STATS_CACHE );
+        return self::enqueue( array( $id ) ) > 0;
     }
 
     /**
@@ -621,6 +687,11 @@ class EasyOpt_Images {
         return is_array( $meta ) && ! empty( $meta['variants'] );
     }
 
+    /** Restored by hand from the Media Library (see META_EXCLUDE). */
+    public static function is_excluded( $id ) {
+        return (bool) get_post_meta( (int) $id, self::META_EXCLUDE, true );
+    }
+
     /**
      * Has this attachment already been through the optimizer at all — including
      * a run that produced no usable variant (too large, unsupported source,
@@ -629,6 +700,9 @@ class EasyOpt_Images {
      * a file that can never shrink is processed once, not on every run.
      */
     public static function has_been_attempted( $id ) {
+        if ( self::is_excluded( $id ) ) {
+            return true; // Restored by hand: bulk runs skip it.
+        }
         $meta = get_post_meta( (int) $id, self::META, true );
         // Sig-aware: an attempt made under DIFFERENT settings is stale, so the
         // image counts as not-yet-attempted and is re-queued at the new
@@ -661,31 +735,46 @@ class EasyOpt_Images {
      * Library-wide stats for the dashboard.
      */
     public static function stats() {
-        // The expensive half — a scan of every _easyopt_img row — is cached
-        // briefly and keyed on the settings signature, so a 2s progress poll on
-        // a large library does not re-scan every tick (and a settings change
-        // invalidates it at once). Queue depth is always live below.
-        $agg = get_transient( self::STATS_CACHE );
-        if ( ! is_array( $agg ) || ( $agg['sig'] ?? '' ) !== self::settings_signature() ) {
-            $agg = self::compute_aggregate();
-            set_transient( self::STATS_CACHE, $agg, 20 );
-        }
-
         // Live queue depth — cheap, and must stay real-time for the poll.
         $oq        = self::queue( self::HOOK_OPTIMIZE );
         $rq        = self::queue( self::HOOK_RESTORE );
         $pending   = $oq->get_pending_count();
         $failed    = $oq->get_failed_count();
         $restoring = $rq->get_pending_count();
+        $busy      = ( $pending + $restoring ) > 0;
+
+        // The expensive half — a scan of every _easyopt_img row — is cached
+        // briefly and keyed on the settings signature, so a 2s progress poll on
+        // a large library does not re-scan every tick (and a settings change
+        // invalidates it at once). Also re-scanned once when the queue goes
+        // idle, so the resting numbers are exact rather than up to 20s old.
+        $agg = get_transient( self::STATS_CACHE );
+        if ( ! is_array( $agg ) || ( $agg['sig'] ?? '' ) !== self::settings_signature()
+            || ( ! empty( $agg['busy'] ) && ! $busy ) ) {
+            $agg         = self::compute_aggregate();
+            $agg['busy'] = $busy;
+            // Images neither processed nor queued. Unlike `current`, this does
+            // not move while the queue works (it only moves when something is
+            // queued or restored, and both clear this cache), so the live
+            // `processed` below stays exact on every poll with no re-scan.
+            $agg['untouched'] = max( 0, $agg['total'] - $agg['current'] - $pending - $failed );
+            set_transient( self::STATS_CACHE, $agg, 20 );
+        }
 
         return array(
             'total'       => $agg['total'],
+            // Live. Every image that is neither queued nor untouched has been
+            // processed: optimized, skipped, failed or restored by hand. So
+            // processed + pending = total for a full run, on every poll.
+            'processed'   => max( 0, min( $agg['total'], $agg['total'] - $pending - $agg['untouched'] ) ),
             'optimized'   => $agg['optimized'],
             // Reaches 100% even when some images can't be shrunk, and re-opens
             // when settings change (those images become stale = not current).
             'remaining'   => max( 0, $agg['total'] - $agg['current'] ),
             // Attempted at the current settings but produced no servable variant.
             'skipped'     => $agg['skipped'],
+            // Restored one by one in the Media Library; bulk runs skip them.
+            'excluded'    => $agg['excluded'],
             'saved'       => $agg['saved'],
             'saved_human' => size_format( $agg['saved'] ),
             'formats'     => EasyOpt_Images_Capability::available_formats(),
@@ -742,11 +831,19 @@ class EasyOpt_Images {
             }
         }
 
+        // Restored by hand: done as far as bulk runs are concerned, so they
+        // count as current or "Optimize N remaining" could never reach zero.
+        // Restore deleted their _easyopt_img row, so no double count.
+        $excluded = (int) $wpdb->get_var(
+            $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->postmeta} WHERE meta_key = %s", self::META_EXCLUDE )
+        );
+
         return array(
             'total'     => $total,
             'optimized' => $optimized,
-            'current'   => $current,
+            'current'   => min( $total, $current + $excluded ),
             'skipped'   => $skipped,
+            'excluded'  => $excluded,
             'saved'     => $saved,
             'sig'       => $sig,
         );

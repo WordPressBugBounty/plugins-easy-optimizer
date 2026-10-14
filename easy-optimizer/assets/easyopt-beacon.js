@@ -281,17 +281,40 @@
 		} catch (e) { fontSigCache = null; return null; }
 	}
 
-	/* ── Per-session de-dupe ─────────────────────────────────────────── */
+	/* ── De-dupe ─────────────────────────────────────────────────────── */
 	// Once this browser session has reported a given (url_type, viewport) we
 	// skip re-sending on later page loads in the same session. The server
 	// already stops enqueuing the beacon once a bucket is warm; this just
 	// trims redundant in-session reports so the origin isn't hit repeatedly.
 	function ssKey() { return 'eo_beacon:' + (cfg.urlType || '') + ':' + viewport; }
+
+	// (2.7.3) Per-browser memory of THIS page, across sessions. A page that a
+	// full-page or CDN cache keeps serving with the beacon in it would
+	// otherwise be reported again by the same visitor on every visit. Tied to
+	// the render (cfg.rendered) and to what the page asks for, so a page
+	// re-rendered after its data was cleared reports again. Kept to the 50
+	// most recent pages so the stored list cannot grow without bound.
+	var LS_KEY = 'eo_beacon_pages';
+	function pageKey() { return (cfg.pageUrl || location.href) + '|' + viewport; }
+	function pageVal() { return (cfg.rendered || '') + ':' + need.lcp + need.classes + need.fonts; }
+	function pageMap() {
+		try { var m = JSON.parse(window.localStorage.getItem(LS_KEY) || '{}'); return m && typeof m === 'object' ? m : {}; } catch (e) { return {}; }
+	}
+
 	function alreadyReported() {
-		try { return !!window.sessionStorage && !!sessionStorage.getItem(ssKey()); } catch (e) { return false; }
+		try { if (window.sessionStorage && sessionStorage.getItem(ssKey())) { return true; } } catch (e) {}
+		return pageMap()[pageKey()] === pageVal();
 	}
 	function markReported() {
 		try { if (window.sessionStorage) { sessionStorage.setItem(ssKey(), '1'); } } catch (e) {}
+		try {
+			var m = pageMap(), k = pageKey();
+			delete m[k];
+			var keys = Object.keys(m);
+			for (var i = 0; i < keys.length - 49; i++) { delete m[keys[i]]; }
+			m[k] = pageVal();
+			window.localStorage.setItem(LS_KEY, JSON.stringify(m));
+		} catch (e) {}
 	}
 
 	/* ── Send (once) ─────────────────────────────────────────────────── */
