@@ -90,36 +90,50 @@ class EasyOpt_Images_Encoder {
 
         $quality = max( 1, min( 100, (int) $quality ) );
 
+        // Encode under a temporary name; the variant appears under its real
+        // name only once it is known good. Delivery serves any variant that
+        // EXISTS, and every engine creates its output file before encoding —
+        // it sat at 0 bytes under the public name for the whole encode, so a
+        // page rendered meanwhile pointed <picture> at an empty file, and a
+        // runner killed then (time or memory limit) left it there for good.
+        // The format stays the last extension: engines read it from the name.
+        $out = $dir . '/' . basename( $dest, '.' . $format ) . '.eotmp.' . $format;
+
         switch ( $encoder ) {
             case 'imagick':
-                $result = self::encode_imagick( $source, $dest, $format, $quality, $max_dim );
+                $result = self::encode_imagick( $source, $out, $format, $quality, $max_dim );
                 break;
             case 'gd':
-                $result = self::encode_gd( $source, $dest, $format, $quality, $max_dim, $info );
+                $result = self::encode_gd( $source, $out, $format, $quality, $max_dim, $info );
                 break;
             default:
-                $result = self::encode_exec( $source, $dest, $format, $quality );
+                $result = self::encode_exec( $source, $out, $format, $quality );
                 break;
         }
 
         if ( is_wp_error( $result ) ) {
-            self::cleanup( $dest );
+            self::cleanup( $out );
             return $result;
         }
 
         // Rule 1. Nothing below this line trusts the encoder.
-        if ( ! EasyOpt_Images_Capability::valid_file( $dest, $format ) ) {
-            self::cleanup( $dest );
+        if ( ! EasyOpt_Images_Capability::valid_file( $out, $format ) ) {
+            self::cleanup( $out );
             return new WP_Error(
                 'invalid_output',
                 'The encoder reported success but produced a file that is not valid ' . strtoupper( $format ) . '.'
             );
         }
 
-        $bytes = (int) filesize( $dest );
+        $bytes = (int) filesize( $out );
         if ( $bytes <= 0 ) {
-            self::cleanup( $dest );
+            self::cleanup( $out );
             return new WP_Error( 'empty_output', 'The encoder produced an empty file.' );
+        }
+
+        if ( ! @rename( $out, $dest ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+            self::cleanup( $out );
+            return new WP_Error( 'rename_failed', 'Could not move the encoded file into place.' );
         }
 
         return array(

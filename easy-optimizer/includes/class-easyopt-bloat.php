@@ -17,6 +17,14 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class EasyOpt_Bloat {
 
+    /**
+     * (2.7.4) Priority for the init callbacks the handlers below register.
+     * init() itself runs ON init at priority 1, and WordPress never runs a
+     * callback added to the priority that is already executing — so the
+     * wp-embed and heartbeat removals, registered at 1, silently never ran.
+     */
+    const LATE_INIT = 20;
+
     public static function init() {
 
         // WP-Cron throttle — runs independently of the bloat toggles.
@@ -103,7 +111,17 @@ class EasyOpt_Bloat {
      * a Bloat option actually changes (see EasyOpt_Save_Coordinator).
      */
     private static function any_enabled() {
-        return (int) EasyOpt_Config::get( 'bloat_any', 0 ) > 0;
+        // (2.7.4) A standalone autoloaded option, written by recalc_any_enabled().
+        // It used to be read through EasyOpt_Config::get(), which only knows the
+        // easyopt_settings array — the flag is never in it, so this was always 0
+        // and no Bloat toggle ever took effect. Missing (toggles saved before the
+        // flag existed, or never saved) → work it out once and store it.
+        $any = get_option( 'easyopt_bloat_any', null );
+        if ( null === $any ) {
+            self::recalc_any_enabled();
+            $any = get_option( 'easyopt_bloat_any', 0 );
+        }
+        return (int) $any > 0;
     }
 
     /**
@@ -157,7 +175,7 @@ class EasyOpt_Bloat {
             if ( ! is_admin() ) {
                 wp_deregister_script( 'wp-embed' );
             }
-        }, 1 );
+        }, self::LATE_INIT );
     }
 
     public static function disable_xmlrpc() {
@@ -298,7 +316,7 @@ class EasyOpt_Bloat {
             // Kill heartbeat everywhere.
             add_action( 'init', function () {
                 wp_deregister_script( 'heartbeat' );
-            }, 1 );
+            }, self::LATE_INIT );
             return; // No frequency needed if fully disabled.
         }
 
@@ -309,7 +327,7 @@ class EasyOpt_Bloat {
                 if ( ! is_admin() ) {
                     wp_deregister_script( 'heartbeat' );
                 }
-            }, 1 );
+            }, self::LATE_INIT );
             add_action( 'admin_init', function () {
                 global $pagenow;
                 if ( ! in_array( $pagenow, array( 'post.php', 'post-new.php' ), true ) ) {
@@ -322,7 +340,7 @@ class EasyOpt_Bloat {
                 if ( ! is_admin() ) {
                     wp_deregister_script( 'heartbeat' );
                 }
-            }, 1 );
+            }, self::LATE_INIT );
         }
         // 'everywhere' — don't disable anywhere, just control frequency.
 

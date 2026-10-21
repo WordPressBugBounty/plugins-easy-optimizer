@@ -5,7 +5,7 @@ Tags: performance, cache, pagespeed, core web vitals, speed
 Requires at least: 6.4
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 2.7.3
+Stable tag: 2.7.4
 License: GNU General Public License v2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -177,6 +177,8 @@ Yes. You can trigger purges from your own code with these action hooks:
 `do_action( 'easyopt_purge_url', 'https://example.com/some-page/' );` — clear one URL.
 `do_action( 'easyopt_purge_url_type', 'home' );` — clear a key page type (home, front or posts page).
 
+`do_action( 'easyopt_purge_url', get_permalink( $post_id ) );` is the call to use from a plugin that shows content on a page other than its own, for example forum replies embedded in a post. It also clears that URL in Cloudflare and in your host's cache when those are connected.
+
 The plugin also fires events you can listen to: `easyopt_cache_cleared_all`, `easyopt_cache_cleared_url` (passes the URL) and `easyopt_page_cached`. For Cloudflare, `EasyOpt_Cloudflare::purge_url( $url )` and `EasyOpt_Cloudflare::purge_all()` are available when the integration is connected.
 
 == External Services ==
@@ -211,6 +213,22 @@ Easy Optimizer's usage analytics are opt-in and disabled by default. When enable
 14. Accessibility & SEO — eight accessibility audit toggles and two SEO audit toggles with clear Lighthouse audit descriptions.
 
 == Changelog ==
+
+= 2.7.4 =
+* Fixed: with bbPress, a new reply now clears the cached topic page (including its later pages), its forum, the parent forums and the forums index. Before, it cleared only the reply's own address, so visitors kept seeing the thread without the reply until the cache expired. The person who posted saw it, because logged-in users and guests who have posted skip the cache. Edits, approvals, spam and trash clear the same pages.
+* Fixed: with "Post Comments as bbPress Topics", a reply now also clears the post or page that shows the topic.
+* Improved: image optimization encodes several images at once on servers with spare CPUs: half the CPUs the site may use, up to 3 at a time. It used to encode one image at a time on any server, so a large library took a day or more. Shared hosting with one or two CPUs keeps encoding one at a time. Set `EASYOPT_IMAGES_CONCURRENCY` in wp-config.php to choose the number (up to 8).
+* Improved: image optimization no longer pauses for half a second after each image, and "Optimize all" now starts its workers once instead of once per 200 images queued.
+* Fixed: an image the server kept stopping part-way through (PHP time or memory limit) was retried forever, ahead of every other image, so optimization looked stuck. It is now skipped after two tries and the reason is recorded. Each encode also gets its own time allowance, so one large image no longer runs past the PHP time limit, and a long image is no longer picked up a second time by another worker while it is still being encoded.
+* Fixed: Bloat Removal toggles had no effect. The setting that tells Easy Optimizer any toggle is on was saved in one place and read from another, so nothing was ever removed. Every toggle now applies from the next page load.
+* Fixed: "Disable Embeds" now also removes the wp-embed script, and Heartbeat control now stops Heartbeat on the front end as chosen. Both removals were registered too late in WordPress's start-up to ever run.
+* Fixed: upgrading a Free Trial from the Smart Images panel. The Upgrade button answered "This account is already on a paid plan", and even a purchase that went through was not picked up by the site until the licence key was pasted in by hand. After paying, the site now moves to the paid plan by itself: straight away while the panel is open, otherwise at the next background check (about every 10 minutes). Image delivery continues throughout.
+* Fixed: Cloud Optimization recognises a 14-day trial. The panel showed a trial license as a paid plan; it now shows "Trial · N days left" and an Upgrade button that upgrades the license you already have. When a trial runs out the site stays connected, serving from your own server, and Upgrade switches it straight back on, with no key to paste again.
+* Fixed: a license key is checked before it is sent, so a mis-paste gets a clear answer straight away. License and connection errors are now in plain words. Before, the licensing service's own developer messages could be shown, such as "The license_key string is limited to 32 characters."
+* Fixed: some valid license keys were changed when saved (keys containing characters such as % followed by two letters or digits, or < >), which made the connection fail.
+* Fixed: messages in the Cloud Optimization panel are colored: errors in red, success in green. Wording across the license screens and notices is updated; out-of-date references to "fpfree_" account keys and a free plan are gone, and the notice for a license that stopped working no longer says "subscription ended" for every case.
+* Improved: connecting and disconnecting are faster. Connecting saves its settings once instead of about twenty times, the panel reloads without a fixed one-second pause, and the screen after checkout no longer reconnects the site every five seconds while it waits for the purchase.
+* Fixed: a WebP or AVIF copy now appears under its real name only once it is complete. Before, the file existed empty while it was being encoded, so a page shown at that moment could point at an empty image, and a worker stopped at that moment left the empty file in place.
 
 = 2.7.3 =
 * New: Restore original or Optimize a single image from the Media Library. A status column in the list view and a row in the image details panel show whether each image is optimized, skipped or restored. An image you restore yourself is left alone by later "Optimize all" runs until you choose Optimize for it again.
@@ -431,6 +449,9 @@ Easy Optimizer's usage analytics are opt-in and disabled by default. When enable
 * Initial release — lazy load and Image CDN.
 
 == Upgrade Notice ==
+
+= 2.7.4 =
+Bloat Removal toggles now take effect (they did nothing before). bbPress replies now clear the cached topic, forum and linked post pages. Image optimization runs several encodes at once on servers with spare CPUs, and no longer gets stuck on an image the server keeps stopping.
 
 = 2.7.3 =
 Adds Restore and Optimize for single images in the Media Library, a Stop button for image optimization, and two optional accessibility fixes (skip links, main landmark). Background checks now run only while work is queued.

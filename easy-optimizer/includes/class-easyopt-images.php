@@ -85,6 +85,11 @@ class EasyOpt_Images {
         add_action( self::HOOK_OPTIMIZE, array( __CLASS__, 'run_optimize' ) );
         add_action( self::HOOK_RESTORE, array( __CLASS__, 'run_restore' ) );
         add_action( 'delete_attachment', array( __CLASS__, 'on_delete_attachment' ) );
+        // Every process that dispatches runners (admin click, the REST runner
+        // re-dispatching itself, the cron watchdog) passes through here, so the
+        // filters see the same numbers everywhere.
+        add_filter( 'easyopt_queue_concurrency', array( __CLASS__, 'filter_queue_concurrency' ), 10, 3 );
+        add_filter( 'easyopt_queue_task_delay', array( __CLASS__, 'filter_queue_task_delay' ), 10, 2 );
     }
 
     /**
@@ -221,18 +226,121 @@ class EasyOpt_Images {
     private static function queue( $hook ) {
         static $queues = array();
         if ( ! isset( $queues[ $hook ] ) ) {
+            // Optimize concurrency comes from filter_queue_concurrency(), which
+            // runner processes that never build this object also see.
             $queues[ $hook ] = new EasyOpt_Queue( self::QUEUE_GROUP, $hook, self::MAX_RETRIES, 1 );
         }
         return $queues[ $hook ];
     }
 
     /**
+     * How many images to encode at once.
+     *
+     * Encoding is CPU-bound and single-threaded per image, so one runner uses
+     * one core however large the server is: a 12,000-image library took about
+     * 38 hours one at a time (11 s per image, every size, WebP + AVIF). Half
+     * the CPUs this site may use, leaving the rest for visitors, at most 3 by
+     * default — each runner also holds a PHP worker, and a stock PHP-FPM pool
+     * has only 5. EASYOPT_IMAGES_CONCURRENCY or the easyopt_images_concurrency
+     * filter set it outright (the queue caps it at EasyOpt_Queue::MAX_CONCURRENCY).
+     *
+     * @return int
+     */
+    public static function concurrency() {
+        $n = defined( 'EASYOPT_IMAGES_CONCURRENCY' )
+            ? (int) EASYOPT_IMAGES_CONCURRENCY
+            : min( 3, intdiv( self::cpu_count(), 2 ) );
+        return max( 1, (int) apply_filters( 'easyopt_images_concurrency', $n ) );
+    }
+
+    /**
+     * CPUs this site may actually use, 1 when unknown. Takes the LOWEST of the
+     * signals available, because each can over-report on its own: the affinity
+     * list shows every host CPU under CloudLinux (whose cpuinfo is virtualised
+     * to the account's limit), and both show every host CPU inside a container
+     * whose limit is a cgroup quota. Unreadable files (open_basedir) count as
+     * absent, which falls back to 1 — today's behaviour.
+     *
+     * @return int
+     */
+    public static function cpu_count() {
+        static $n = null;
+        if ( null === $n ) {
+            $n = self::cpu_count_from( array(
+                'status'      => (string) @file_get_contents( '/proc/self/status' ), // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+                'cpuinfo'     => (string) @file_get_contents( '/proc/cpuinfo' ), // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+                'cpu_max'     => (string) @file_get_contents( '/sys/fs/cgroup/cpu.max' ), // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+                'cfs_quota'   => (string) @file_get_contents( '/sys/fs/cgroup/cpu/cpu.cfs_quota_us' ), // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+                'cfs_period'  => (string) @file_get_contents( '/sys/fs/cgroup/cpu/cpu.cfs_period_us' ), // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+                'windows'     => '\\' === DIRECTORY_SEPARATOR ? (string) getenv( 'NUMBER_OF_PROCESSORS' ) : '',
+            ) );
+        }
+        return $n;
+    }
+
+    /**
+     * cpu_count() over already-read file contents (testable without /proc).
+     *
+     * @param array $src status, cpuinfo, cpu_max, cfs_quota, cfs_period, windows.
+     * @return int
+     */
+    public static function cpu_count_from( array $src ) {
+        $seen = array();
+
+        if ( preg_match( '/^Cpus_allowed_list:\s*(\S+)/m', (string) ( $src['status'] ?? '' ), $m ) ) {
+            $count = 0;
+            foreach ( explode( ',', $m[1] ) as $part ) {
+                $b      = explode( '-', $part, 2 );
+                $count += isset( $b[1] ) ? max( 0, (int) $b[1] - (int) $b[0] + 1 ) : 1;
+            }
+            $seen[] = $count;
+        }
+        $procs = preg_match_all( '/^processor\s*:/m', (string) ( $src['cpuinfo'] ?? '' ) );
+        if ( $procs ) {
+            $seen[] = $procs;
+        }
+        // cgroup v2 "<quota> <period>" ("max" = unlimited), then cgroup v1.
+        if ( preg_match( '/^(\d+)\s+(\d+)/', (string) ( $src['cpu_max'] ?? '' ), $m ) && (int) $m[2] > 0 ) {
+            $seen[] = (int) ceil( (int) $m[1] / (int) $m[2] );
+        } elseif ( (int) ( $src['cfs_quota'] ?? 0 ) > 0 && (int) ( $src['cfs_period'] ?? 0 ) > 0 ) {
+            $seen[] = (int) ceil( (int) $src['cfs_quota'] / (int) $src['cfs_period'] );
+        }
+        if ( (int) ( $src['windows'] ?? 0 ) > 0 ) {
+            $seen[] = (int) $src['windows'];
+        }
+
+        $seen = array_filter( $seen );
+        return $seen ? max( 1, min( $seen ) ) : 1;
+    }
+
+    /** easyopt_queue_concurrency — optimize runners only; restore stays at 1. */
+    public static function filter_queue_concurrency( $c, $group, $callback = '' ) {
+        if ( self::QUEUE_GROUP === $group && self::HOOK_OPTIMIZE === $callback ) {
+            return self::concurrency();
+        }
+        return $c;
+    }
+
+    /**
+     * easyopt_queue_task_delay — no pause between images. The queue's default
+     * 0.5 s spaces out page renders for the origin; next to an 11 s encode it
+     * protects nothing and added about 1.7 hours to a 12,000-image run.
+     */
+    public static function filter_queue_task_delay( $delay, $group = '' ) {
+        return self::QUEUE_GROUP === $group ? 0 : $delay;
+    }
+
+    /**
      * Queue attachments for optimization.
      *
      * @param int[] $ids
+     * @param bool  $start Dispatch runners now. enqueue_library() passes false
+     *                     and starts once at the end — starting per page sent
+     *                     a fresh batch of runners every 200 rows, before the
+     *                     first ones had claimed anything to count as active.
      * @return int Number queued.
      */
-    public static function enqueue( array $ids ) {
+    public static function enqueue( array $ids, $start = true ) {
         $q = self::queue( self::HOOK_OPTIMIZE );
         $n = 0;
         foreach ( $ids as $id ) {
@@ -244,7 +352,9 @@ class EasyOpt_Images {
         if ( $n ) {
             // Queued images leave the cached "untouched" count (see stats()).
             delete_transient( self::STATS_CACHE );
-            $q->start_queue();
+            if ( $start ) {
+                $q->start_queue();
+            }
         }
         return $n;
     }
@@ -318,7 +428,7 @@ class EasyOpt_Images {
                 }
             }
             if ( $pending ) {
-                $total += self::enqueue( $pending );
+                $total += self::enqueue( $pending, false );
             }
 
             $paged++;
@@ -327,6 +437,9 @@ class EasyOpt_Images {
             }
         } while ( true );
 
+        if ( $total ) {
+            self::queue( self::HOOK_OPTIMIZE )->start_queue();
+        }
         return $total;
     }
 
@@ -356,6 +469,25 @@ class EasyOpt_Images {
         }
 
         $meta    = (array) get_post_meta( $id, self::META, true );
+
+        // A runner the server kills mid-image (PHP time or memory limit) never
+        // reaches the queue's failure path: the row is simply claimed again once
+        // its lock expires — and, as the oldest row, ahead of every other image,
+        // so one image could hold the whole run forever. An exception would have
+        // failed the row at MAX_RETRIES (encoder errors are recorded, not
+        // thrown), so a claim count past it means earlier runs died. Record it
+        // as attempted (it then counts as skipped, and single Optimize in the
+        // Media Library can still retry it) and move on.
+        if ( (int) ( $task['_attempts'] ?? 0 ) > self::MAX_RETRIES ) {
+            $meta['optimized_at'] = time();
+            $meta['sig']          = self::settings_signature();
+            $meta['errors']       = array( 'The server stopped the optimizer while it was encoding this image (time or memory limit), so it was skipped.' );
+            update_post_meta( $id, self::META, $meta );
+            return;
+        }
+        $task_id    = (int) ( $task['_task_id'] ?? 0 );
+        $lock_token = (string) ( $task['_lock_token'] ?? '' );
+
         // Re-encode from scratch when the quality/format settings changed since
         // the last run — otherwise the mtime skip below keeps the stale variants
         // forever and a quality change never takes effect.
@@ -399,7 +531,21 @@ class EasyOpt_Images {
                     continue;
                 }
 
+                // Each encode gets its own time budget: a runner processes images
+                // for up to 20 s and then finishes the one in hand, so one large
+                // image could cross a 30 s max_execution_time and be killed.
+                if ( function_exists( 'set_time_limit' ) ) {
+                    @set_time_limit( 120 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+                }
+
                 $res = EasyOpt_Images_Encoder::encode( $source, $dest, $format, self::quality( $format ), 0 );
+
+                // Still alive: keep the claim. The queue hands a row whose lock
+                // is older than 120 s to another runner, which then encoded the
+                // same image a second time alongside this one.
+                if ( $task_id > 0 ) {
+                    EasyOpt_Queue::touch_lock( $task_id, $lock_token );
+                }
 
                 if ( is_wp_error( $res ) ) {
                     $errors[] = $file . ' → ' . $format . ': ' . $res->get_error_message();

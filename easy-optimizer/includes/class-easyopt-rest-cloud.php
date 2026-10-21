@@ -906,12 +906,33 @@ class EasyOpt_REST_Cloud {
 	 *  Connect an existing licence
 	 * ───────────────────────────────────────────── */
 
+	/**
+	 * (2.7.4) Does a pasted key look like one the service issues? A licence key
+	 * is "sk_" plus 29 printable characters (32 in all); an account key from the
+	 * retired email signup starts with fpfree_. Mirrors fxv3_key_shape_ok() on
+	 * the service, so a mis-paste is answered here, at once, in plain words.
+	 */
+	public static function key_shape_ok( $key ) {
+		return (bool) preg_match( '/^(sk_[\x21-\x7e]{29}|fpfree_[A-Za-z0-9_\-]{8,})$/', (string) $key );
+	}
+
 	public static function connect( WP_REST_Request $req ) {
-		$key = sanitize_text_field( (string) $req->get_param( 'license_key' ) );
+		// (2.7.4) Not sanitize_text_field(): it deletes %XX sequences and
+		// tag-shaped text, both of which occur in Freemius keys. Surrounding
+		// whitespace from the copy is the only thing to drop.
+		$key = trim( (string) $req->get_param( 'license_key' ) );
 		if ( '' === $key ) {
 			return rest_ensure_response( array(
 				'success' => false,
-				'message' => __( 'Paste your licence key first.', 'easy-optimizer' ),
+				'code'    => 'empty',
+				'message' => __( 'Paste your license key first.', 'easy-optimizer' ),
+			) );
+		}
+		if ( ! self::key_shape_ok( $key ) ) {
+			return rest_ensure_response( array(
+				'success' => false,
+				'code'    => 'invalid_key_format',
+				'message' => __( 'That doesn\'t look like a license key. License keys are 32 characters long and start with sk_ — copy the whole key from your trial or purchase email.', 'easy-optimizer' ),
 			) );
 		}
 		self::track( 'connect_attempted', array( 'mode' => 'license' ) );
@@ -931,19 +952,20 @@ class EasyOpt_REST_Cloud {
 		$body = is_wp_error( $resp ) ? null : json_decode( wp_remote_retrieve_body( $resp ), true );
 
 		if ( ! is_array( $body ) || empty( $body['ok'] ) ) {
-			$code = is_array( $body ) && ! empty( $body['code'] ) ? (string) $body['code'] : 'failed';
+			$code = is_array( $body ) && ! empty( $body['code'] ) ? (string) $body['code'] : ( is_wp_error( $resp ) ? 'unreachable' : 'failed' );
 			self::track( 'connect_failed', array( 'reason' => $code ) );
 			return rest_ensure_response( array(
 				'success' => false,
 				'code'    => $code,
 				'message' => is_array( $body ) && ! empty( $body['message'] )
 					? (string) $body['message']
-					: __( 'Could not connect that licence key.', 'easy-optimizer' ),
+					: ( is_wp_error( $resp )
+						? __( 'Couldn\'t reach Easy Optimizer Cloud from this server. Check the site can make outgoing connections, then try again.', 'easy-optimizer' )
+						: __( 'Couldn\'t connect that license key. Please try again in a minute.', 'easy-optimizer' ) ),
 			) );
 		}
 
-		self::store_account( $body, (string) ( $body['plan'] ?? 'single' ) );
-		EasyOpt_Config::set( 'easyopt_cloud_license_key', $key );
+		self::store_account( $body, (string) ( $body['plan'] ?? 'single' ), $key );
 		self::track( 'connect_ok', array( 'plan' => (string) ( $body['plan'] ?? '' ) ) );
 
 		return rest_ensure_response( array(
@@ -951,6 +973,48 @@ class EasyOpt_REST_Cloud {
 			'plan'    => (string) ( $body['plan'] ?? '' ),
 			'message' => __( 'Connected. Your images are being optimized.', 'easy-optimizer' ),
 		) );
+	}
+
+	/**
+	 * (2.7.4) Finish an upgrade bought from the panel.
+	 *
+	 * When the purchase lands, the service retires this site's Trial token
+	 * and parks the new licence for it. This site claims it with the retired
+	 * token plus its install hash — which only this site can produce — and
+	 * gets the paid credentials and the licence key back, as if the customer
+	 * had pasted the key. Called when /usage answers 'claim_pending'.
+	 *
+	 * @return bool True when the site is now on the paid plan.
+	 */
+	public static function claim_upgrade() {
+		$token = EasyOpt_CDN_Cloud::token();
+		if ( '' === $token || ! EasyOpt_CDN_Cloud::is_unpaid() ) {
+			return false;
+		}
+		$resp = wp_remote_post(
+			apply_filters( 'easyopt_cloud_api', EasyOpt_CDN_Cloud::API ) . 'connect',
+			array(
+				'timeout' => 25,
+				'headers' => array( 'Content-Type' => 'application/json' ),
+				'body'    => wp_json_encode( array(
+					'license_key'  => $token,
+					'site'         => esc_url_raw( get_site_url() ),
+					'install_hash' => EasyOpt_CDN_Cloud::install_hash(),
+				) ),
+			)
+		);
+		$body = is_wp_error( $resp ) ? null : json_decode( wp_remote_retrieve_body( $resp ), true );
+		$plan = is_array( $body ) ? (string) ( $body['plan'] ?? '' ) : '';
+		if ( ! is_array( $body ) || empty( $body['ok'] ) || empty( $body['license_key'] )
+			|| '' === $plan || in_array( $plan, array( 'trial', 'free' ), true ) ) {
+			return false;
+		}
+
+		self::store_account( $body, $plan, (string) $body['license_key'] );
+		// Paid signs locally on the same zone; the Trial's signed map is not needed.
+		delete_option( EasyOpt_CDN_Cloud::MAP_OPTION );
+		self::track( 'upgraded', array( 'plan' => $plan ) );
+		return true;
 	}
 
 	/**
@@ -965,27 +1029,32 @@ class EasyOpt_REST_Cloud {
 	 * There is no probe gate to wait for: the shared endpoint's certificate
 	 * is already live, so delivery is safe the moment credentials exist.
 	 */
-	private static function store_account( array $body, $plan ) {
-		EasyOpt_Config::set( 'easyopt_cloud_account', sanitize_key( (string) ( $body['account'] ?? '' ) ) );
-		EasyOpt_Config::set( 'easyopt_cloud_endpoint', esc_url_raw( (string) ( $body['endpoint'] ?? '' ) ) );
-		EasyOpt_Config::set( 'easyopt_cloud_plan', sanitize_key( $plan ) );
-		EasyOpt_Config::set( 'easyopt_cloud_token', (string) ( $body['token'] ?? '' ) );
-		EasyOpt_Config::set( 'easyopt_cloud_key', (string) ( $body['key'] ?? '' ) );
-		EasyOpt_Config::set( 'easyopt_cloud_salt', (string) ( $body['salt'] ?? '' ) );
-		EasyOpt_Config::set( 'easyopt_cloud_fingerprint', esc_url_raw( get_site_url() ) );
-		EasyOpt_Config::set( 'easyopt_cloud_active', 1 );
-		EasyOpt_Config::set( 'easyopt_cloud_image_cap', (int) ( $body['image_cap'] ?? 0 ) );
+	private static function store_account( array $body, $plan, $license_key = null ) {
+		$save = array(
+			'easyopt_cloud_account'     => sanitize_key( (string) ( $body['account'] ?? '' ) ),
+			'easyopt_cloud_endpoint'    => esc_url_raw( (string) ( $body['endpoint'] ?? '' ) ),
+			'easyopt_cloud_plan'        => sanitize_key( $plan ),
+			'easyopt_cloud_token'       => (string) ( $body['token'] ?? '' ),
+			'easyopt_cloud_key'         => (string) ( $body['key'] ?? '' ),
+			'easyopt_cloud_salt'        => (string) ( $body['salt'] ?? '' ),
+			'easyopt_cloud_fingerprint' => esc_url_raw( get_site_url() ),
+			'easyopt_cloud_active'      => 1,
+			'easyopt_cloud_image_cap'   => (int) ( $body['image_cap'] ?? 0 ),
+			// (2.6.1) Proof that THIS site owns its seat. /v3/disconnect now
+			// requires it before it will release a host from a multi-site
+			// licence — otherwise any one site on the licence could strip
+			// another's delivery, and stripping the last one hands the whole
+			// Freemius seat back. Free plans have no install id and do not need
+			// one; their token already identifies a single site.
+			'easyopt_cloud_activation_id' => sanitize_text_field( (string) ( $body['activation_id'] ?? '' ) ),
+		);
+		if ( null !== $license_key ) {
+			$save['easyopt_cloud_license_key'] = (string) $license_key;
+		}
 		// A fresh (re)connect clears any prior revoke, so the reconnect prompt and
 		// its admin notice disappear the moment a valid licence is connected again.
 		delete_option( 'easyopt_cloud_revoked' );
 		delete_option( 'easyopt_cloud_revoked_dismissed' );
-		// (2.6.1) Proof that THIS site owns its seat. /v3/disconnect now
-		// requires it before it will release a host from a multi-site
-		// licence — otherwise any one site on the licence could strip
-		// another's delivery, and stripping the last one hands the whole
-		// Freemius seat back. Free plans have no install id and do not need
-		// one; their token already identifies a single site.
-		EasyOpt_Config::set( 'easyopt_cloud_activation_id', sanitize_text_field( (string) ( $body['activation_id'] ?? '' ) ) );
 
 		// (2.7.1) Force the connected-account optimization set ON, every connect,
 		// regardless of prior state. A connected account is opting into the whole
@@ -994,8 +1063,8 @@ class EasyOpt_REST_Cloud {
 		// makes edge-served CSS/JS safe: only the deferred sheet leaves origin).
 		// Unconditional by design: a reconnect re-asserts the intended config so a
 		// site that drifted (or a lapsed trial that fell back) comes back correct.
-		// Routed through Config::set() so the save-coordinator clears generated
-		// CSS / LCP rows for each change.
+		// Saved with the credentials below, in one batch, so the save-coordinator
+		// clears generated CSS / LCP rows for every change.
 		$force = array(
 			'easyopt_img_opt'                 => 1,        // Images
 			'easyopt_cloud_assets'            => 1,        // CSS, JS & fonts from the edge
@@ -1008,9 +1077,11 @@ class EasyOpt_REST_Cloud {
 			'easyopt_lazyload_fonts'          => 1,        // Smart Lazyload Fonts
 			'easyopt_lcp_preload'             => 1,        // (2.7.2) LCP preload — a fresh install's wizard baseline leaves it 0
 		);
-		foreach ( $force as $opt => $val ) {
-			EasyOpt_Config::set( $opt, $val );
-		}
+		// (2.7.4) ONE save. Each Config::set() was its own option write plus a
+		// full save-coordinator pass — about twenty per connect. A single
+		// update_many() hands the coordinator the same set of changes once, so
+		// it clears generated CSS / LCP rows exactly as before.
+		EasyOpt_Config::update_many( $save + $force );
 		delete_transient( 'easyopt_cloud_maint' );
 
 		// (2.6.1) PRIME THE USAGE CACHE from the connect response.
@@ -1034,6 +1105,8 @@ class EasyOpt_REST_Cloud {
 			'image_cap'   => (int) ( $body['image_cap'] ?? 0 ),
 			'plan'        => (string) $plan,
 			'trial_days_left' => (int) ( $body['trial_days_left'] ?? 0 ),
+			// (2.7.4) A Freemius trial is a trial from the first render.
+			'trial_ends_at'   => (int) ( $body['trial_ends_at'] ?? 0 ),
 			'active'      => 1,
 			'reason'      => '',
 			'period'      => gmdate( 'Y-m' ),
@@ -1114,14 +1187,18 @@ class EasyOpt_REST_Cloud {
 	 */
 	public static function upgrade( WP_REST_Request $req ) {
 		$plan = sanitize_key( (string) $req->get_param( 'plan' ) );
+		// (2.7.4) A Freemius trial connects with its licence key and has no
+		// token; the service upgrades that licence in place.
+		$auth = EasyOpt_CDN_Cloud::is_unpaid()
+			? array( 'token' => EasyOpt_CDN_Cloud::token() )
+			: array( 'license_key' => (string) EasyOpt_Config::get( 'cloud_license_key', '' ) );
 		$resp = wp_remote_post(
 			apply_filters( 'easyopt_cloud_api', EasyOpt_CDN_Cloud::API ) . 'upgrade',
 			array(
 				'timeout' => 20,
 				'headers' => array( 'Content-Type' => 'application/json' ),
-				'body'    => wp_json_encode( array(
-					'token' => EasyOpt_CDN_Cloud::token(),
-					'plan'  => $plan ? $plan : 'single',
+				'body'    => wp_json_encode( $auth + array(
+					'plan' => $plan ? $plan : 'single',
 				) ),
 			)
 		);
@@ -1156,7 +1233,15 @@ class EasyOpt_REST_Cloud {
 
 	public static function refresh() {
 		$u = EasyOpt_CDN_Cloud::usage( true );
-		if ( is_array( $u ) && ! empty( $u['plan'] ) && 'free' !== $u['plan'] ) {
+		// (2.7.4) Reconnect only when the service says this site moved from an
+		// unpaid plan to a paid one and it still holds the old credentials. This
+		// ran for every plan except 'free' — so the panel's 5-second post-checkout
+		// poll re-ran a whole connect (two licensing calls, a full cache clear,
+		// a preload restart) every tick for Trials and paid sites alike. A paid
+		// licence, including a Freemius trial converting, needs only usage().
+		$was_unpaid = in_array( (string) EasyOpt_Config::get( 'cloud_plan', '' ), array( 'trial', 'free' ), true );
+		if ( $was_unpaid && is_array( $u ) && ! empty( $u['plan'] ) && ! in_array( $u['plan'], array( 'trial', 'free' ), true )
+			&& '' !== (string) EasyOpt_Config::get( 'cloud_license_key', '' ) ) {
 			$c = wp_remote_post(
 				apply_filters( 'easyopt_cloud_api', EasyOpt_CDN_Cloud::API ) . 'connect',
 				array(

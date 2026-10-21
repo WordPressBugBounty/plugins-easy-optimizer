@@ -983,6 +983,14 @@ class EasyOpt_CDN_Cloud {
 			$body['license_key'] = (string) EasyOpt_Config::get( 'cloud_license_key', '' );
 		}
 		$r = self::post( 'usage', $body, 10 );
+		// (2.7.4) A Trial upgraded from the panel: the service retired this
+		// site's token and holds the new licence for it to pick up. Runs from
+		// the panel's post-checkout poll and from the 10-minute maintenance
+		// check alike, so closing the checkout tab early loses nothing.
+		if ( is_array( $r ) && 'claim_pending' === (string) ( $r['code'] ?? '' )
+			&& class_exists( 'EasyOpt_REST_Cloud' ) && EasyOpt_REST_Cloud::claim_upgrade() ) {
+			return self::usage( true );
+		}
 		if ( ! $r || empty( $r['ok'] ) ) {
 			return is_array( $t ) ? $t : null;
 		}
@@ -1071,10 +1079,12 @@ class EasyOpt_CDN_Cloud {
 			}
 			self::post( 'disconnect', $body, 10 );
 		}
+		// (2.7.4) One save instead of ten, each with its own coordinator pass.
+		$wipe = array( 'easyopt_cloud_active' => 0 );
 		foreach ( array( 'cloud_account', 'cloud_token', 'cloud_endpoint', 'cloud_plan', 'cloud_key', 'cloud_salt', 'cloud_license_key', 'cloud_fingerprint', 'cloud_activation_id' ) as $k ) {
-			EasyOpt_Config::set( 'easyopt_' . $k, '' );
+			$wipe[ 'easyopt_' . $k ] = '';
 		}
-		EasyOpt_Config::set( 'easyopt_cloud_active', 0 );
+		EasyOpt_Config::update_many( $wipe );
 		delete_option( self::MAP_OPTION );
 		delete_transient( 'easyopt_cloud_usage' );
 		delete_transient( 'easyopt_cloud_maint' );

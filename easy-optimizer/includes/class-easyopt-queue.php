@@ -1345,6 +1345,9 @@ class EasyOpt_Queue {
         // stays clean for dedup hashing.
         $task_data['_task_id']    = (int)    $task['id'];
         $task_data['_lock_token'] = (string) $task['lock_token'];
+        // Claims so far, this one included — lets a callback spot a row whose
+        // earlier runners died before reaching the failure path below.
+        $task_data['_attempts']   = (int)    ( $task['attempts'] ?? 0 );
 
         try {
             do_action_ref_array( $task['callback_action'], array( $task_data ) );

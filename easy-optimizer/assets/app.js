@@ -94,6 +94,52 @@ const api = {
         body: body ? JSON.stringify(body) : '{}'
     }).then(r => r.json()).catch(() => null),
 };
+// ── Cloud licence helpers (2.7.4) ──
+// The same shape rule the plugin (EasyOpt_REST_Cloud::key_shape_ok) and the
+// service apply: a license key is "sk_" + 29 printable characters, 32 in all;
+// an account key from the retired email signup starts with fpfree_. Checking
+// it here answers a mis-paste instantly instead of after a slow round trip.
+const keyShapeOk = (k) => /^(sk_[\x21-\x7e]{29}|fpfree_[A-Za-z0-9_\-]{8,})$/.test(k);
+const KEY_SHAPE_MSG = "That doesn't look like a license key. License keys are 32 characters long and start with sk_ — copy the whole key from your trial or purchase email.";
+const NO_SERVER_MSG = "Couldn't reach the server. Please try again.";
+// Message colours: errors red, success green, progress/neutral grey.
+const noteColor = (kind) => kind === 'error' ? 'var(--eop-danger)' : (kind === 'ok' ? 'var(--eop-success)' : 'var(--eop-text-muted, #50575e)');
+// On a trial? Either an account from the retired email signup (plan trial/free)
+// or a Freemius trial licence (paid mechanics; the service reports the trial
+// end it reads off the licence as usage.trial_ends_at).
+const onCloudTrial = (d) => !!d && (d.plan === 'trial' || d.plan === 'free'
+    || Number((d.usage && d.usage.trial_ends_at) || 0) > 0);
+// Upgrade from either kind of trial. Freemius checkout is hosted, so the plan
+// only changes when its webhook reaches the service; this opens checkout, then
+// polls /cloud/refresh (bounded, ~2 minutes) until the account is paid and no
+// trial is left running, and reloads. say(text, kind) reports progress.
+function startCloudUpgrade(plan, say) {
+    say('Opening checkout…', 'info');
+    return api.post('/cloud/upgrade', { plan: plan || 'single' }).then((r) => {
+        if (!r || !r.success || !r.checkout_url) {
+            say((r && r.message) || 'Could not open checkout. Please try again in a moment.', 'error');
+            return false;
+        }
+        window.open(r.checkout_url, '_blank', 'noopener');
+        say('Complete your purchase in the new tab, then come back — this page picks it up automatically.', 'info');
+        let tries = 0;
+        const t = setInterval(() => {
+            tries++;
+            api.post('/cloud/refresh', {}).then((u) => {
+                if (u && u.plan && u.plan !== 'free' && u.plan !== 'trial' && !onCloudTrial(u)) {
+                    clearInterval(t);
+                    say('Upgraded. Reloading…', 'ok');
+                    window.location.reload();
+                }
+            }).catch(() => { });
+            if (tries > 24) {
+                clearInterval(t);
+                say('Still waiting on your purchase. Reload this page once it completes.', 'info');
+            }
+        }, 5000);
+        return true;
+    });
+}
 // ── Helpers ──
 const Icon = ({ id, cls }) => (React.createElement("svg", { className: cls || 'eop-icon' }, React.createElement("use", { href: '#eop-i-' + id })));
 const nf = (n) => n != null && n.toLocaleString ? n.toLocaleString() : (n ?? '—');
@@ -1118,7 +1164,12 @@ function ServiceBar({ switchTab }) {
     if (connected) {
         const u = (d && d.usage) || {};
         const inactive = Number(u.active || 0) === 0;
-        return React.createElement("div", { className: "eop-cloudbar eop-cloudbar--on" }, React.createElement("span", { className: "eop-cloudbar__dot" }), React.createElement("span", { className: "eop-cloudbar__title" }, "Cloud Optimization"), React.createElement("span", { className: "eop-cloudbar__note" }, inactive ? "Connect to activate" : "Active \u00b7 serving from the edge"), React.createElement("span", { style: { flex: 1 } }), React.createElement("button", { type: "button", className: "eop-cloudbar__btn eop-cloudbar__btn--ghost", onClick: () => switchTab('flux') }, "Manage"));
+        return React.createElement("div", { className: "eop-cloudbar eop-cloudbar--on" }, React.createElement("span", { className: "eop-cloudbar__dot" }), React.createElement("span", { className: "eop-cloudbar__title" }, "Cloud Optimization"), React.createElement("span", { className: "eop-cloudbar__note" }, 
+        // (2.7.4) It IS connected here; "Connect to activate" told a
+        // connected site to do what it had already done.
+        inactive
+            ? (u.reason === 'trial_expired' ? "Trial ended \u00b7 upgrade to switch it back on" : "Paused \u00b7 serving from your own server")
+            : (onCloudTrial(d) ? "Trial \u00b7 serving from the edge" : "Active \u00b7 serving from the edge")), React.createElement("span", { style: { flex: 1 } }), React.createElement("button", { type: "button", className: "eop-cloudbar__btn eop-cloudbar__btn--ghost", onClick: () => switchTab('flux') }, "Manage"));
     }
     return React.createElement("div", { className: "eop-cloudbar" }, React.createElement("span", { className: "eop-cloudbar__spark" }, "\u26a1"), React.createElement("span", { className: "eop-cloudbar__title" }, "Cloud Optimization"), React.createElement("span", { className: "eop-cloudbar__pitch" }, "Guaranteed 90+ PageSpeed scores"), React.createElement("span", { style: { flex: 1 } }), React.createElement("button", { type: "button", className: "eop-cloudbar__btn eop-cloudbar__btn--ghost", onClick: () => switchTab('flux') }, "Learn more"), React.createElement("button", { type: "button", className: "eop-cloudbar__btn eop-cloudbar__btn--solid", onClick: () => switchTab('flux') }, "Try Free Now"));
 }
@@ -1133,7 +1184,10 @@ function FluxPressPanel({ settings, onChange, switchTab, showToast }) {
     const [d, setD] = React.useState(null);
     const [busy, setBusy] = React.useState(false);
     const [keyVal, setKeyVal] = React.useState('');
-    const [msg, setMsg] = React.useState('');
+    // (2.7.4) { text, kind } — kind colours it: error red, ok green, info grey.
+    // Everything here used to render in the same grey description style.
+    const [note, setNote] = React.useState({ text: '', kind: 'info' });
+    const say = (text, kind) => setNote({ text: text, kind: kind || 'info' });
     const load = React.useCallback(() => { api.get('/cloud/usage').then((r) => setD(r || {})); }, []);
     React.useEffect(() => { load(); }, [load]);
     if (!d) {
@@ -1143,32 +1197,54 @@ function FluxPressPanel({ settings, onChange, switchTab, showToast }) {
     const u = d.usage || {};
     const inactive = connected && Number(u.active || 0) === 0;
     const live = connected && !inactive;
+    const trial = connected && onCloudTrial(d);
+    const trialOver = u.reason === 'trial_expired';
+    const daysLeft = Number(u.trial_days_left || 0);
     const doConnect = () => {
         const k = (keyVal || '').trim();
-        if (k.length < 6) {
-            setMsg('Paste the licence key from your Easy Optimizer Cloud account.');
+        if (!k) {
+            say('Paste your license key first.', 'error');
+            return;
+        }
+        if (!keyShapeOk(k)) {
+            say(KEY_SHAPE_MSG, 'error');
             return;
         }
         setBusy(true);
-        setMsg('Connecting\u2026');
+        say('Connecting\u2026', 'info');
         api.post('/cloud/connect', { license_key: k }).then((r) => {
-            setBusy(false);
             if (r && r.success) {
-                setMsg('Connected. Reloading\u2026');
-                setTimeout(() => window.location.reload(), 1000);
+                say('Connected \u2014 loading your Cloud settings\u2026', 'ok');
+                // (2.7.4) No fixed one-second wait before the reload.
+                window.location.reload();
+                return;
             }
-            else {
-                setMsg((r && r.message) || 'That key could not be verified.');
-            }
-        }).catch(() => { setBusy(false); setMsg('That key could not be verified.'); });
+            setBusy(false);
+            say((r && r.message) || NO_SERVER_MSG, 'error');
+        });
     };
     const disconnect = () => {
         if (!window.confirm('Disconnect Cloud Optimization? Everything goes back to running on your own server. Nothing breaks.')) {
             return;
         }
         setBusy(true);
-        api.post('/cloud/disconnect', {}).then(() => window.location.reload()).catch(() => setBusy(false));
+        say('Disconnecting\u2026', 'info');
+        api.post('/cloud/disconnect', {}).then((r) => {
+            if (r && r.success) {
+                window.location.reload();
+                return;
+            }
+            setBusy(false);
+            say((r && r.message) || NO_SERVER_MSG, 'error');
+        });
     };
+    const upgrade = () => {
+        setBusy(true);
+        startCloudUpgrade('single', say).then(() => setBusy(false));
+    };
+    const noteEl = note.text
+        ? React.createElement("p", { className: "eop-cloudnote", role: note.kind === 'error' ? 'alert' : 'status', style: { margin: '8px 0 0', fontSize: '13px', color: noteColor(note.kind), fontWeight: note.kind === 'info' ? 400 : 600 } }, note.text)
+        : null;
     // Every feature is locked until an account is connected; connecting
     // unlocks the toggle. 'cloud' flips an edge-delivery setting, 'local' an
     // on-server optimization, 'soon' is context only, 'outcome' is an X/check.
@@ -1208,8 +1284,16 @@ function FluxPressPanel({ settings, onChange, switchTab, showToast }) {
         { name: 'Priority Support', kind: 'outcome' },
     ];
     const band = connected
-        ? React.createElement("div", { className: "eop-cloudhero eop-cloudhero--on" }, React.createElement("div", null, React.createElement("div", { className: "eop-cloudhero__row" }, React.createElement("span", { className: "eop-cloudhero__dot" }), React.createElement("strong", null, live ? "Active" : "Connected"), React.createElement("span", { className: "eop-cloudhero__acct" }, " \u00b7 account ", React.createElement("code", null, d.account))), inactive ? React.createElement("p", { className: "description", style: { margin: '8px 0 0' } }, "Your plan is not active. Everything is running on your own server, free.") : null), React.createElement("button", { type: "button", className: "eop-btn eop-btn--ghost", disabled: busy, onClick: disconnect }, "Disconnect"))
-        : React.createElement("div", { className: "eop-cloudpitch" }, React.createElement("div", { className: "eop-cloudhero eop-cloudhero--pitch" }, React.createElement("div", { className: "eop-gauge" }, React.createElement("svg", { viewBox: "0 0 132 132", width: "116", height: "116", "aria-hidden": "true" }, React.createElement("circle", { cx: 66, cy: 66, r: 58, fill: "none", stroke: "var(--eop-brand-soft)", strokeWidth: 12 }), React.createElement("circle", { cx: 66, cy: 66, r: 58, fill: "none", stroke: "var(--eop-brand)", strokeWidth: 12, strokeLinecap: "round", strokeDasharray: "364.4", strokeDashoffset: "14.6", transform: "rotate(-90 66 66)" })), React.createElement("div", { className: "eop-gauge__val" }, React.createElement("b", null, "96"), React.createElement("small", null, "Mobile"))), React.createElement("div", { className: "eop-cloudhero__pitchbody" }, React.createElement("h3", { className: "eop-cloudhero__hd eop-cloudhero__hd--lg" }, "Guaranteed 90+ PageSpeed \u2014 or you don't pay."), React.createElement("p", { className: "description", style: { margin: '8px 0 0', maxWidth: '46ch' } }, "Move images, CSS, JS and fonts onto our edge. We tune it until Google scores you 90+ on mobile and desktop."), React.createElement("div", { className: "eop-cloudhero__cta" }, React.createElement("button", { type: "button", className: "eop-btn eop-btn--solid eop-btn--lg", onClick: () => openFreemiusCheckout({ onComplete: () => setMsg('Trial started \ud83c\udf89 Check your email for your licence key, then paste it below.') }) }, "Start 14-day free trial"), React.createElement("span", { className: "eop-cloudhero__trust" }, "No card \u00b7 Cancel anytime")))), React.createElement("div", { className: "eop-cloudstats" }, React.createElement("div", null, React.createElement("b", null, "119"), React.createElement("span", null, "edge locations")), React.createElement("div", null, React.createElement("b", null, "79%"), React.createElement("span", null, "smaller images")), React.createElement("div", null, React.createElement("b", null, "AVIF"), React.createElement("span", null, "per-browser")), React.createElement("div", null, React.createElement("b", null, "0"), React.createElement("span", null, "server load"))));
+        ? React.createElement("div", { className: "eop-cloudhero eop-cloudhero--on" }, React.createElement("div", null, React.createElement("div", { className: "eop-cloudhero__row" }, React.createElement("span", { className: "eop-cloudhero__dot" }), React.createElement("strong", null, 
+        // (2.7.4) A Freemius trial used to read "Active", as if paid.
+        live
+            ? (trial ? (daysLeft > 0 ? "Trial \u00b7 " + daysLeft + (daysLeft === 1 ? " day left" : " days left") : "Trial") : "Active")
+            : (trialOver ? "Trial ended" : "Paused")), React.createElement("span", { className: "eop-cloudhero__acct" }, " \u00b7 account ", React.createElement("code", null, d.account))), inactive ? React.createElement("p", { className: "description", style: { margin: '8px 0 0' } }, trialOver
+            ? "Your trial has ended. Everything is running on your own server, free \u2014 upgrade to switch the cloud back on."
+            : u.reason === 'quota'
+                ? "You've used this month's allowance. Cloud delivery resumes when the month resets; your site works normally meanwhile."
+                : "Your plan is not active. Everything is running on your own server, free.") : null, noteEl), React.createElement("div", { style: { display: 'flex', gap: '8px', flexShrink: 0 } }, trial ? React.createElement("button", { type: "button", className: "eop-btn eop-btn--solid", disabled: busy, onClick: upgrade }, "Upgrade") : null, React.createElement("button", { type: "button", className: "eop-btn eop-btn--ghost", disabled: busy, onClick: disconnect }, "Disconnect")))
+        : React.createElement("div", { className: "eop-cloudpitch" }, React.createElement("div", { className: "eop-cloudhero eop-cloudhero--pitch" }, React.createElement("div", { className: "eop-gauge" }, React.createElement("svg", { viewBox: "0 0 132 132", width: "116", height: "116", "aria-hidden": "true" }, React.createElement("circle", { cx: 66, cy: 66, r: 58, fill: "none", stroke: "var(--eop-brand-soft)", strokeWidth: 12 }), React.createElement("circle", { cx: 66, cy: 66, r: 58, fill: "none", stroke: "var(--eop-brand)", strokeWidth: 12, strokeLinecap: "round", strokeDasharray: "364.4", strokeDashoffset: "14.6", transform: "rotate(-90 66 66)" })), React.createElement("div", { className: "eop-gauge__val" }, React.createElement("b", null, "96"), React.createElement("small", null, "Mobile"))), React.createElement("div", { className: "eop-cloudhero__pitchbody" }, React.createElement("h3", { className: "eop-cloudhero__hd eop-cloudhero__hd--lg" }, "Guaranteed 90+ PageSpeed \u2014 or you don't pay."), React.createElement("p", { className: "description", style: { margin: '8px 0 0', maxWidth: '46ch' } }, "Move images, CSS, JS and fonts onto our edge. We tune it until Google scores you 90+ on mobile and desktop."), React.createElement("div", { className: "eop-cloudhero__cta" }, React.createElement("button", { type: "button", className: "eop-btn eop-btn--solid eop-btn--lg", onClick: () => openFreemiusCheckout({ onComplete: () => say('Trial started \ud83c\udf89 Check your email for your license key, then paste it below.', 'ok') }) }, "Start 14-day free trial"), React.createElement("span", { className: "eop-cloudhero__trust" }, "No card \u00b7 Cancel anytime")))), React.createElement("div", { className: "eop-cloudstats" }, React.createElement("div", null, React.createElement("b", null, "119"), React.createElement("span", null, "edge locations")), React.createElement("div", null, React.createElement("b", null, "79%"), React.createElement("span", null, "smaller images")), React.createElement("div", null, React.createElement("b", null, "AVIF"), React.createElement("span", null, "per-browser")), React.createElement("div", null, React.createElement("b", null, "0"), React.createElement("span", null, "server load"))));
     return React.createElement("div", { style: { display: "block" }, className: "eop-panel", id: "eop-panel-flux" }, React.createElement("h2", null, "Cloud Optimization"), React.createElement("p", { className: "description", style: { marginTop: 0 } }, "One account upgrades features you already have. Anything left off keeps running on your own server, free."), band, React.createElement("table", { className: "eop-flux-tbl", style: { marginTop: '20px' } }, React.createElement("tbody", null, React.createElement("tr", null, React.createElement("th", null, "Feature"), React.createElement("th", null, "On your server"), React.createElement("th", null, "With Cloud"), React.createElement("th", { style: { textAlign: 'right' } }, connected ? "Cloud" : "")), rows.map((r) => React.createElement("tr", { key: r.name, className: r.kind === 'soon' ? 'is-soon' : '' }, React.createElement("td", { className: "eop-flux-tbl__name" }, React.createElement("strong", null, r.name)), r.kind === 'outcome'
         ? React.createElement("td", null, React.createElement("span", { className: "eop-flux-x" }, "\u2715"))
         : React.createElement("td", { className: "eop-flux-tbl__sub" }, r.local), r.kind === 'outcome'
@@ -1228,12 +1312,15 @@ function FluxPressPanel({ settings, onChange, switchTab, showToast }) {
                 }
                 else {
                     r.set(!r.on);
-                } } }), React.createElement("span", { className: "eop-flux-sw__track" }, React.createElement("span", { className: "eop-flux-sw__knob" })), !live ? React.createElement("span", { className: "eop-flux-sw__lock" }, "\ud83d\udd12") : null)))))), React.createElement("p", { className: "description", style: { marginTop: '10px' } }, "Edge delivery unlocks when you connect an account. Guaranteed best possible result."), !connected ? React.createElement("div", { className: "eop-keybox" }, React.createElement("div", { className: "eop-keybox__label" }, "Already started a trial or bought a plan?"), React.createElement("div", { className: "eop-keybox__row" }, React.createElement("input", { type: "text", value: keyVal, placeholder: "Paste your licence key", disabled: busy,
+                } } }), React.createElement("span", { className: "eop-flux-sw__track" }, React.createElement("span", { className: "eop-flux-sw__knob" })), !live ? React.createElement("span", { className: "eop-flux-sw__lock" }, "\ud83d\udd12") : null)))))), React.createElement("p", { className: "description", style: { marginTop: '10px' } }, "Edge delivery unlocks when you connect an account. Guaranteed best possible result."), !connected ? React.createElement("div", { className: "eop-keybox" }, React.createElement("div", { className: "eop-keybox__label" }, "Already started a trial or bought a plan?"), React.createElement("div", { className: "eop-keybox__row" }, React.createElement("input", { type: "text", value: keyVal, placeholder: "Paste your license key (starts with sk_)", disabled: busy,
         onChange: (e) => setKeyVal(e.target.value),
+        // (2.7.4) preventDefault: this box sits inside the settings <form>, so
+        // Enter also submitted it and reloaded the page, wiping the message.
         onKeyDown: (e) => { if (e.key === 'Enter') {
+            e.preventDefault();
             doConnect();
         } },
-        className: "eop-keybox__input" }), React.createElement("button", { type: "button", className: "eop-btn eop-btn--solid", disabled: busy, onClick: doConnect }, busy ? "Connecting\u2026" : "Connect")), msg ? React.createElement("p", { className: "description", style: { margin: '8px 0 0' } }, msg) : null) : null);
+        className: "eop-keybox__input" }), React.createElement("button", { type: "button", className: "eop-btn eop-btn--solid", disabled: busy, onClick: doConnect }, busy ? "Connecting\u2026" : "Connect")), noteEl) : null);
 }
 function AdaptiveImagesPanel({ settings, onChange, applyServerSettings }) {
     // A site already on the v2.5 per-zone service keeps its existing panel
@@ -1315,22 +1402,32 @@ function AdaptiveImagesPanel({ settings, onChange, applyServerSettings }) {
     const doConnect = () => {
         const k = (keyInput || '').trim();
         if (!k) {
-            setMsg('Paste your licence key first.');
-            setMsgColor('var(--eop-danger)');
+            setMsg('Paste your license key first.');
+            setMsgColor(noteColor('error'));
+            return;
+        }
+        // (2.7.4) Answer a mis-paste here, instantly, not after a slow round trip.
+        if (!keyShapeOk(k)) {
+            setMsg(KEY_SHAPE_MSG);
+            setMsgColor(noteColor('error'));
             return;
         }
         setBusy(true);
         setMsg('Connecting…');
-        setMsgColor('');
+        setMsgColor(noteColor('info'));
         api.post('/cloud/connect', { license_key: k }).then((r) => {
-            setBusy(false);
-            setMsg((r && r.message) || (r && r.success ? 'Connected.' : 'Could not connect that key.'));
-            setMsgColor(r && r.success ? 'var(--eop-success)' : 'var(--eop-danger)');
             if (r && r.success) {
+                setMsg('Connected — loading your Cloud settings…');
+                setMsgColor(noteColor('ok'));
                 applyServerSettings({ easyopt_img_opt: '1' });
-                setTimeout(() => window.location.reload(), 1200);
+                // (2.7.4) No fixed 1.2-second wait before the reload.
+                window.location.reload();
+                return;
             }
-        }).catch(() => { setBusy(false); setMsg('Connection failed.'); setMsgColor('var(--eop-danger)'); });
+            setBusy(false);
+            setMsg((r && r.message) || NO_SERVER_MSG);
+            setMsgColor(noteColor('error'));
+        });
     };
     // Lost keys are now recovered through the Freemius customer portal
     // (keyBox links to it), so the old /cloud/resend flow is gone.
@@ -1338,47 +1435,27 @@ function AdaptiveImagesPanel({ settings, onChange, applyServerSettings }) {
         if (!confirm('Disconnect Easy Optimizer Cloud? Images will be served from your own server again.'))
             return;
         setBusy(true);
-        api.post('/cloud/disconnect', {}).then(() => { window.location.reload(); }).catch(() => setBusy(false));
+        setMsg('Disconnecting…');
+        setMsgColor(noteColor('info'));
+        api.post('/cloud/disconnect', {}).then((r) => {
+            if (r && r.success) {
+                window.location.reload();
+                return;
+            }
+            setBusy(false);
+            setMsg((r && r.message) || NO_SERVER_MSG);
+            setMsgColor(noteColor('error'));
+        });
     };
     // Freemius checkout is hosted, so the plugin cannot complete a purchase.
     // It opens the checkout window, then asks the server whether the webhook
     // has landed. Nothing about the plan is decided on this side — a client
     // that could talk itself into a paid plan would be a free upgrade for
-    // anyone who can open devtools.
+    // anyone who can open devtools. (2.7.4) Shared with the Cloud tab, and it
+    // now also finishes for a Freemius trial (same plan, trial ended).
     const doUpgrade = (plan) => {
         setBusy(true);
-        setMsg('Opening checkout…');
-        setMsgColor('');
-        api.post('/cloud/upgrade', { plan: plan || 'single' }).then((r) => {
-            setBusy(false);
-            if (!r || !r.success || !r.checkout_url) {
-                setMsg((r && r.message) || 'Could not open checkout.');
-                setMsgColor('var(--eop-danger)');
-                return;
-            }
-            window.open(r.checkout_url, '_blank', 'noopener');
-            setMsg('Complete your purchase in the new tab, then come back — this page picks it up automatically.');
-            // Poll for the webhook, bounded at ~2 minutes rather than
-            // spinning forever if the checkout was abandoned.
-            let tries = 0;
-            const t = setInterval(() => {
-                tries++;
-                api.post('/cloud/refresh', {}).then((u) => {
-                    if (u && u.plan && u.plan !== 'free' && u.plan !== 'trial') {
-                        clearInterval(t);
-                        window.location.reload();
-                    }
-                }).catch(() => { });
-                if (tries > 24) {
-                    clearInterval(t);
-                    setMsg('Still waiting on your purchase. Reload this page once it completes.');
-                }
-            }, 5000);
-        }).catch(() => {
-            setBusy(false);
-            setMsg('Could not reach the service.');
-            setMsgColor('var(--eop-danger)');
-        });
+        startCloudUpgrade(plan, (text, kind) => { setMsg(text); setMsgColor(noteColor(kind)); }).then(() => setBusy(false));
     };
     if (legacyConnected) {
         // Existing v2.5 connection — hand straight back to the panel they
@@ -1388,12 +1465,20 @@ function AdaptiveImagesPanel({ settings, onChange, applyServerSettings }) {
     const msgEl = msg
         ? React.createElement("p", { style: { margin: '10px 0 0', color: msgColor, fontSize: '13px' } }, msg, fallback ? React.createElement("a", { href: fallback, target: "_blank", rel: "noopener", style: { marginLeft: '8px' } }, "Continue in your browser →") : null, upgradeUrl ? React.createElement("a", { href: upgradeUrl, target: "_blank", rel: "noopener", style: { marginLeft: '8px', fontWeight: 600 } }, "Upgrade to Pro →") : null)
         : null;
-    const keyLink = React.createElement("p", { style: { margin: '14px 0 0', fontSize: '13px' } }, React.createElement("a", { href: "#", onClick: (e) => { e.preventDefault(); setShowKey(!showKey); }, style: { color: '#50575e' } }, "I already have a licence key"));
-    const keyBox = showKey && React.createElement("div", { style: { marginTop: '10px' } }, React.createElement("input", { type: "password", value: keyInput, placeholder: "Licence key, or fpfree_… account key", onChange: (e) => setKeyInput(e.target.value), autoComplete: "new-password", style: { minWidth: '340px', fontFamily: 'monospace' } }), React.createElement("button", { type: "button", className: "button", style: { marginLeft: '8px' }, disabled: busy, onClick: doConnect }, busy ? 'Connecting…' : 'Connect'), React.createElement("p", { className: "description", style: { marginTop: '6px' } }, "Lost your licence key? ", React.createElement("a", { href: (CFG() && CFG().recoverUrl) || 'https://customers.freemius.com/store/14517/password/recover', target: "_blank", rel: "noopener" }, "Recover it from your account"), " \u2014 opens your Easy Optimizer Cloud account."));
+    const keyLink = React.createElement("p", { style: { margin: '14px 0 0', fontSize: '13px' } }, React.createElement("a", { href: "#", onClick: (e) => { e.preventDefault(); setShowKey(!showKey); }, style: { color: '#50575e' } }, "I already have a license key"));
+    const keyBox = showKey && React.createElement("div", { style: { marginTop: '10px' } }, React.createElement("input", { type: "password", value: keyInput, placeholder: "License key (starts with sk_)", onChange: (e) => setKeyInput(e.target.value),
+        // (2.7.4) Enter connects instead of submitting the surrounding settings form.
+        onKeyDown: (e) => { if (e.key === 'Enter') {
+            e.preventDefault();
+            doConnect();
+        } }, autoComplete: "new-password", style: { minWidth: '340px', fontFamily: 'monospace' } }), React.createElement("button", { type: "button", className: "button", style: { marginLeft: '8px' }, disabled: busy, onClick: doConnect }, busy ? 'Connecting…' : 'Connect'), React.createElement("p", { className: "description", style: { marginTop: '6px' } }, "Lost your license key? ", React.createElement("a", { href: (CFG() && CFG().recoverUrl) || 'https://customers.freemius.com/store/14517/password/recover', target: "_blank", rel: "noopener" }, "Recover it from your account"), " \u2014 opens your Easy Optimizer Cloud account."));
     // ── Connected ─────────────────────────────────────
     if (state === 'connected' && cloud) {
         const u = cloud.usage || {};
-        const isTrial = cloud.plan === 'trial' || cloud.plan === 'free';
+        const isTrial = cloud.plan === 'trial' || cloud.plan === 'free'; // unpaid: token signing, image cap
+        // (2.7.4) Any trial, including a Freemius trial licence (paid mechanics),
+        // for what the customer is TOLD; it used to read "Paid plan".
+        const onTrial = onCloudTrial(cloud);
         const daysLeft = Number(u.trial_days_left || 0);
         const trialOver = u.reason === 'trial_expired';
         const cap = Number(u.image_cap || 0);
@@ -1422,8 +1507,8 @@ function AdaptiveImagesPanel({ settings, onChange, applyServerSettings }) {
         inactive
             ? React.createElement("strong", null, "Paused")
             : React.createElement("strong", null, "✓ Live"), " — ", inactive
-            ? (isTrial ? (trialOver ? 'Trial ended' : 'Trial') : 'Serving from your own server')
-            : (isTrial
+            ? (onTrial ? (trialOver ? 'Trial ended' : 'Trial') : 'Serving from your own server')
+            : (onTrial
                 ? (trialOver ? 'Trial ended' : (daysLeft > 0 ? 'Trial · ' + daysLeft + (daysLeft === 1 ? ' day left' : ' days left') : 'Trial'))
                 : 'Paid plan'), " · account ", React.createElement("code", null, cloud.account), React.createElement("button", { type: "button", className: "button button-secondary", style: { marginLeft: '12px' }, disabled: busy, onClick: doDisconnect }, "Disconnect")), inactive && React.createElement("p", { style: { margin: '10px 0 0', fontSize: '13px' } }, React.createElement("strong", null, "Serving from your own server right now. "), u.reason === 'trial_expired'
             ? "Your trial has ended. Easy Optimizer is still optimizing your images locally, for free — you are just not getting per-device sizes or edge delivery any more."
@@ -1436,7 +1521,7 @@ function AdaptiveImagesPanel({ settings, onChange, applyServerSettings }) {
         // What the free plan actually covers, stated up front. Without
         // this a new user sees "Live" plus a small number and
         // reasonably assumes their whole site is optimized.
-        isTrial && React.createElement("p", { style: { margin: '12px 0 0', fontSize: '13px' } }, React.createElement("strong", null, "Your free plan: "), trialLine(daysLeft, quota ? Math.round(quota / 1e9) : 0) + " ", "Images beyond that load from your own server, exactly as before."), isTrial && cap > 0 && React.createElement("div", { style: { marginTop: '14px' } }, React.createElement("div", { style: { fontSize: '13px', marginBottom: '4px' } }, React.createElement("strong", null, imgs + " of " + cap + " images"), " optimized this month"), React.createElement("div", { style: { background: '#e2e4e7', borderRadius: '4px', height: '8px', overflow: 'hidden', maxWidth: '420px' } }, React.createElement("div", { style: { width: imgPct + '%', height: '100%', background: imgPct >= 90 ? '#d63638' : (imgPct >= 70 ? '#dba617' : '#0c9d57') } }))), 
+        onTrial && React.createElement("p", { style: { margin: '12px 0 0', fontSize: '13px' } }, React.createElement("strong", null, "Your trial: "), trialLine(daysLeft, quota ? Math.round(quota / 1e9) : 0) + " ", "Images beyond that load from your own server, exactly as before."), isTrial && cap > 0 && React.createElement("div", { style: { marginTop: '14px' } }, React.createElement("div", { style: { fontSize: '13px', marginBottom: '4px' } }, React.createElement("strong", null, imgs + " of " + cap + " images"), " optimized this month"), React.createElement("div", { style: { background: '#e2e4e7', borderRadius: '4px', height: '8px', overflow: 'hidden', maxWidth: '420px' } }, React.createElement("div", { style: { width: imgPct + '%', height: '100%', background: imgPct >= 90 ? '#d63638' : (imgPct >= 70 ? '#dba617' : '#0c9d57') } }))), 
         // Bandwidth is read from CDN logs and rolled up twice a day.
         // Showing "0 KB of 1 GB" before the first roll-up states a
         // number we do not have; say we are still measuring instead.
@@ -1445,11 +1530,16 @@ function AdaptiveImagesPanel({ settings, onChange, applyServerSettings }) {
             : React.createElement("p", { style: { margin: '12px 0 0', fontSize: '12px', color: '#8c8f94' } }, "Measuring bandwidth — the first figures appear within a day."), 
         // A quiet, permanent line rather than a surprise at 70%, and
         // it names a concrete difference instead of just "upgrade".
-        isTrial && React.createElement("div", { style: { marginTop: '16px', paddingTop: '14px', borderTop: '1px solid #e5e5e5' } }, React.createElement("p", { style: { margin: 0, fontSize: '13px' } }, (imgPct >= 70 || bytePct >= 70) ? React.createElement("strong", null, typeof u.days_left === 'number'
+        onTrial && React.createElement("div", { style: { marginTop: '16px', paddingTop: '14px', borderTop: '1px solid #e5e5e5' } }, React.createElement("p", { style: { margin: 0, fontSize: '13px' } }, (imgPct >= 70 || bytePct >= 70) ? React.createElement("strong", null, typeof u.days_left === 'number'
             ? (u.days_left === 0
                 ? "You are out of room for this month. "
                 : "About " + u.days_left + (u.days_left === 1 ? " day" : " days") + " left at your current rate. ")
-            : "You are running out of room. ") : null, React.createElement("strong", null, "Paid removes the limits"), " — unlimited images and 100× the bandwidth (100 GB), so every page stays fully optimized as your traffic grows. From $4.90/mo, cancel anytime."), React.createElement("p", { style: { margin: '10px 0 0' } }, React.createElement("button", { type: "button", className: "button button-primary", disabled: busy, onClick: () => doUpgrade('single') }, "Upgrade"), React.createElement("a", { href: (u.pricing_url || 'https://fluxpress.io/') + "?utm_source=plugin&utm_medium=cloud_panel", target: "_blank", rel: "noopener", style: { marginLeft: '12px', fontSize: '13px' } }, "Compare plans →"))), 
+            : "You are running out of room. ") : null, 
+        // (2.7.4) A Freemius trial already has the paid allowance, so
+        // "Paid removes the limits" was not true for it.
+        isTrial ? React.createElement("strong", null, "Paid removes the limits") : React.createElement("strong", null, "Keep Cloud Optimization after your trial"), isTrial
+            ? " — unlimited images and 100× the bandwidth (100 GB), so every page stays fully optimized as your traffic grows. From $4.90/mo, cancel anytime."
+            : " — upgrade the license you already have; your site, settings and key stay exactly the same. From $4.90/mo, cancel anytime."), React.createElement("p", { style: { margin: '10px 0 0' } }, React.createElement("button", { type: "button", className: "button button-primary", disabled: busy, onClick: () => doUpgrade('single') }, "Upgrade"), React.createElement("a", { href: (u.pricing_url || 'https://fluxpress.io/') + "?utm_source=plugin&utm_medium=cloud_panel", target: "_blank", rel: "noopener", style: { marginLeft: '12px', fontSize: '13px' } }, "Compare plans →"))), 
         // A customer who bought on the website must be able to paste
         // their key HERE. Requiring them to disconnect first means
         // deliberately breaking a working site in order to upgrade it.
@@ -1471,7 +1561,7 @@ function AdaptiveImagesPanel({ settings, onChange, applyServerSettings }) {
     }
     // ── Trial started → paste the key Freemius just emailed ──
     if (state === 'trialstarted') {
-        return React.createElement("div", { style: { display: "block" }, className: "eop-panel", id: "eop-panel-imgopt" }, React.createElement("h2", null, "Adaptive Images — automatic AVIF/WebP & resizing"), React.createElement("div", { className: "eop-callout", style: { borderLeft: '3px solid var(--eop-success, #0c9d57)' } }, React.createElement("h3", { style: { marginTop: 0 } }, "🎉 Your 14-day free trial has started"), React.createElement("p", { style: { margin: '4px 0 0', fontSize: '13px' } }, "We've emailed your licence key" + (email ? " to " + email : "") + ". Paste it below to switch on edge delivery — everything else is already set up."), keyBox, msgEl));
+        return React.createElement("div", { style: { display: "block" }, className: "eop-panel", id: "eop-panel-imgopt" }, React.createElement("h2", null, "Adaptive Images — automatic AVIF/WebP & resizing"), React.createElement("div", { className: "eop-callout", style: { borderLeft: '3px solid var(--eop-success, #0c9d57)' } }, React.createElement("h3", { style: { marginTop: 0 } }, "🎉 Your 14-day free trial has started"), React.createElement("p", { style: { margin: '4px 0 0', fontSize: '13px' } }, "We've emailed your license key" + (email ? " to " + email : "") + ". Paste it below to switch on edge delivery — everything else is already set up."), keyBox, msgEl));
     }
     // ── Analyzing ─────────────────────────────────────
     if (state === 'analyzing') {

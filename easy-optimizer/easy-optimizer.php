@@ -3,7 +3,7 @@
  * Plugin Name: Easy Optimizer – PageSpeed, Cache & Core Web Vitals
  * Plugin URI:  https://fluxpress.io
  * Description: Page cache, lazy load, used CSS, delay JS, font optimization, image CDN, LCP preload and more — everything you need to ace Core Web Vitals, in one plugin.
- * Version:     2.7.3
+ * Version:     2.7.4
  * Author:      FluxPress
  * Author URI:  https://fluxpress.io
  * Text Domain: easy-optimizer
@@ -24,7 +24,7 @@ if ( ! defined( 'EASYOPT_PLUGIN_FILE' ) ) {
     define( 'EASYOPT_PLUGIN_FILE', __FILE__ );
 }
 if ( ! defined( 'EASYOPT_VERSION' ) ) {
-    define( 'EASYOPT_VERSION', '2.7.3' );
+    define( 'EASYOPT_VERSION', '2.7.4' );
 }
 if ( ! defined( 'EASYOPT_CSS_LOGIC_VERSION' ) ) {
     // (2.5.0 / A2) Last plugin version in which the Used-CSS strip/keep/
@@ -516,6 +516,7 @@ $easyopt_compat_files = array(
     'class-easyopt-compat-fonts.php',
     'class-easyopt-compat-divi.php',
     'class-easyopt-compat-multilingual.php',
+    'class-easyopt-compat-bbpress.php',
 );
 foreach ( $easyopt_compat_files as $easyopt_cf ) {
     $easyopt_cfp = $easyopt_compat_dir . $easyopt_cf;
@@ -548,6 +549,7 @@ if ( is_admin() || wp_doing_cron() || ( defined( 'WP_CLI' ) && WP_CLI ) ) {
 }
 EasyOpt_Compat_Builders::init();
 add_action( 'plugins_loaded', array( 'EasyOpt_Compat_WooCommerce', 'init' ), 20 );
+EasyOpt_Compat_BBPress::init();
 EasyOpt_Compat_LazyLoad::init();
 if ( class_exists( 'EasyOpt_Compat_Fonts' ) ) {
     EasyOpt_Compat_Fonts::init();
@@ -2053,8 +2055,14 @@ add_action( 'admin_notices', function () {
     ?>
     <div class="notice notice-warning is-dismissible" style="padding:12px 15px;">
         <p style="font-size:14px;">
-            <strong><?php esc_html_e( 'Your Cloud optimization subscription has ended.', 'easy-optimizer' ); ?></strong><br>
-            <?php esc_html_e( 'Images & files now load from your own server, and the free on-server optimizer is still running — Reconnect a license to resume cloud delivery.', 'easy-optimizer' ); ?>
+            <?php
+            // (2.7.4) "Subscription ended" was wrong for most of the ways a
+            // license stops (cancelled, refunded, removed from this site).
+            // A trial running out no longer lands here at all: it stays
+            // connected and the Cloud panel offers the upgrade.
+            ?>
+            <strong><?php esc_html_e( 'Cloud Optimization was disconnected: this license is no longer active.', 'easy-optimizer' ); ?></strong><br>
+            <?php esc_html_e( 'Images & files now load from your own server, and the free on-server optimizer is still running. Connect an active license to switch Cloud Optimization back on.', 'easy-optimizer' ); ?>
         </p>
         <p>
             <a href="<?php echo esc_url( $settings_url ); ?>" class="button button-primary" style="margin-right:8px;"><?php esc_html_e( 'Reconnect', 'easy-optimizer' ); ?></a>

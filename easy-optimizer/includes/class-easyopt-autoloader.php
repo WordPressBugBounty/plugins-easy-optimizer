@@ -46,6 +46,7 @@ if ( ! class_exists( 'EasyOpt_Autoloader' ) ) {
             'EasyOpt_Cache_Purge_Trait'    => 'includes/cache/trait-easyopt-cache-purge.php',
             'EasyOpt_Preload_Results'      => 'includes/class-easyopt-preload-results.php',
             'EasyOpt_Cloudflare'           => 'includes/class-easyopt-cloudflare.php',
+            'EasyOpt_Compat_BBPress'       => 'includes/compat/class-easyopt-compat-bbpress.php',
             'EasyOpt_Compat_Builders'      => 'includes/compat/class-easyopt-compat-builders.php',
             'EasyOpt_Compat_Conflicts'     => 'includes/compat/class-easyopt-compat-conflicts.php',
             'EasyOpt_Notices'              => 'includes/class-easyopt-notices.php',

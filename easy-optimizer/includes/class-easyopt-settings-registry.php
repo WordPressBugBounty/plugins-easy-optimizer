@@ -247,7 +247,7 @@ class EasyOpt_Settings_Registry {
         $s['easyopt_cloud_plan']             = array( 'default' => '' ) + $str_text;
         $s['easyopt_cloud_key']              = array( 'default' => '' ) + $str_text;
         $s['easyopt_cloud_salt']             = array( 'default' => '' ) + $str_text;
-        $s['easyopt_cloud_license_key']      = array( 'default' => '' ) + $str_text;
+        $s['easyopt_cloud_license_key']      = array( 'default' => '', 'sanitize' => array( __CLASS__, 'sanitize_license_key' ), 'type' => 'string' );
         $s['easyopt_cloud_fingerprint']      = array( 'default' => '' ) + $str_text;
         $s['easyopt_cloud_activation_id']    = array( 'default' => '' ) + $str_text;
         $s['easyopt_cloud_active']           = array( 'default' => 0 ) + $int_bool;
@@ -415,6 +415,17 @@ class EasyOpt_Settings_Registry {
      * Format handed to core's own encoder via image_editor_output_format.
      * '' means "leave core's default alone", which is the safe state.
      */
+    /**
+     * (2.7.4) A licence key is stored byte-for-byte. Freemius keys use symbols
+     * (% ^ + ; < …), and sanitize_text_field() — the old sanitizer — deletes
+     * any %XX sequence and anything shaped like a tag, so some valid keys were
+     * saved altered and the site then failed every licence check. Only
+     * whitespace and non-printable characters are removed.
+     */
+    public static function sanitize_license_key( $v ) {
+        return is_string( $v ) ? (string) preg_replace( '/[^\x21-\x7e]/', '', $v ) : '';
+    }
+
     public static function sanitize_image_format( $v ) {
         $v = is_string( $v ) ? strtolower( trim( $v ) ) : '';
         // AVIF is deliberately NOT accepted here. Storing the upload ITSELF as
