@@ -325,6 +325,10 @@ class EasyOpt_Delay_JS {
             'easyopt-lazy-shim',
             'easyopt-beacon',
             'easyopt-lcp-beacon',
+            // (2.7.5) Independent Analytics' inline page-view tracker. Delayed,
+            // it waited for an interaction on Mac/Linux desktops, so visitors
+            // who left without scrolling or moving the mouse were never counted.
+            'independent-analytics-script',
         );
 
         // jQuery exclusions — on by default (preserves existing behavior).

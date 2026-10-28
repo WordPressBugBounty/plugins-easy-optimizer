@@ -918,9 +918,10 @@ class EasyOpt_REST_Cloud {
 
 	public static function connect( WP_REST_Request $req ) {
 		// (2.7.4) Not sanitize_text_field(): it deletes %XX sequences and
-		// tag-shaped text, both of which occur in Freemius keys. Surrounding
-		// whitespace from the copy is the only thing to drop.
-		$key = trim( (string) $req->get_param( 'license_key' ) );
+		// tag-shaped text, both of which occur in Freemius keys. The stored
+		// setting's sanitizer drops only what no key contains (whitespace,
+		// non-ASCII), and key_shape_ok() below whitelists the rest.
+		$key = EasyOpt_Settings_Registry::sanitize_license_key( $req->get_param( 'license_key' ) );
 		if ( '' === $key ) {
 			return rest_ensure_response( array(
 				'success' => false,

@@ -3,7 +3,7 @@
  * Plugin Name: Easy Optimizer – PageSpeed, Cache & Core Web Vitals
  * Plugin URI:  https://fluxpress.io
  * Description: Page cache, lazy load, used CSS, delay JS, font optimization, image CDN, LCP preload and more — everything you need to ace Core Web Vitals, in one plugin.
- * Version:     2.7.4
+ * Version:     2.7.5
  * Author:      FluxPress
  * Author URI:  https://fluxpress.io
  * Text Domain: easy-optimizer
@@ -24,7 +24,7 @@ if ( ! defined( 'EASYOPT_PLUGIN_FILE' ) ) {
     define( 'EASYOPT_PLUGIN_FILE', __FILE__ );
 }
 if ( ! defined( 'EASYOPT_VERSION' ) ) {
-    define( 'EASYOPT_VERSION', '2.7.4' );
+    define( 'EASYOPT_VERSION', '2.7.5' );
 }
 if ( ! defined( 'EASYOPT_CSS_LOGIC_VERSION' ) ) {
     // (2.5.0 / A2) Last plugin version in which the Used-CSS strip/keep/

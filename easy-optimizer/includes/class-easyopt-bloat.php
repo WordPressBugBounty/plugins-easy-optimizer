@@ -281,6 +281,9 @@ class EasyOpt_Bloat {
             'wp/v2/search',      // Gutenberg search block
             'oembed/',           // oEmbed discovery
             'wp-site-health/',
+            // (2.7.5) Independent Analytics records every page view with a
+            // guest POST to iawp/search. Blocked, it counted no visitors at all.
+            'iawp/',
         ) );
 
         $route = isset( $GLOBALS['wp']->query_vars['rest_route'] )

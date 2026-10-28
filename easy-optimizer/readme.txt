@@ -5,7 +5,7 @@ Tags: performance, cache, pagespeed, core web vitals, speed
 Requires at least: 6.4
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 2.7.4
+Stable tag: 2.7.5
 License: GNU General Public License v2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -213,6 +213,10 @@ Easy Optimizer's usage analytics are opt-in and disabled by default. When enable
 14. Accessibility & SEO — eight accessibility audit toggles and two SEO audit toggles with clear Lighthouse audit descriptions.
 
 == Changelog ==
+
+= 2.7.5 =
+* Fixed: Independent Analytics stopped counting visitors when Bloat Removal → "Limit REST API to Logged-in Users" was on. Independent Analytics records each page view through the REST API as a logged-out visitor, and the toggle refused those requests. Its address is now allowed, like contact forms and the WooCommerce Store API. Sites were affected from 2.7.4, when Bloat Removal toggles began to take effect.
+* Fixed: with Delay JavaScript on, Independent Analytics missed visitors on Mac and Linux computers who left without scrolling, moving the mouse or typing. Its tracking script is now never delayed.
 
 = 2.7.4 =
 * Fixed: with bbPress, a new reply now clears the cached topic page (including its later pages), its forum, the parent forums and the forums index. Before, it cleared only the reply's own address, so visitors kept seeing the thread without the reply until the cache expired. The person who posted saw it, because logged-in users and guests who have posted skip the cache. Edits, approvals, spam and trash clear the same pages.
@@ -449,6 +453,9 @@ Easy Optimizer's usage analytics are opt-in and disabled by default. When enable
 * Initial release — lazy load and Image CDN.
 
 == Upgrade Notice ==
+
+= 2.7.5 =
+Independent Analytics counts visitors again with "Limit REST API to Logged-in Users" or Delay JavaScript turned on.
 
 = 2.7.4 =
 Bloat Removal toggles now take effect (they did nothing before). bbPress replies now clear the cached topic, forum and linked post pages. Image optimization runs several encodes at once on servers with spare CPUs, and no longer gets stuck on an image the server keeps stopping.
