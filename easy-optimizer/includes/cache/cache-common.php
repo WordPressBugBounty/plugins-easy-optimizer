@@ -168,10 +168,19 @@ if ( ! function_exists( __NAMESPACE__ . '\\is_excluded_uri' ) ) {
         if ( false !== strpos( $ua, 'Mobi' ) ) {
             return true;
         }
-        return (bool) preg_match(
-            '#(avantgo|bada\/|blackberry|blazer|compal|elaine|fennec|hiptop|iemobile|ip(hone|od)|iris|kindle|lge |maemo|midp|mmp|netfront|opera m(ob|in)i|palm( os)?|phone|p(ixi|re)\/|plucker|pocket|psp|series(4|6)0|symbian|treo|up\.(browser|link)|vodafone|wap|windows (ce|phone)|xda|xiino)#i',
-            $ua
-        );
+        return (bool) preg_match( '#' . mobile_ua_legacy_pattern() . '#i', $ua );
+    }
+
+    /**
+     * (2.8.0) The case-insensitive half of is_mobile_ua(), without delimiters.
+     * The .htaccess and Nginx rules build their device test from it, so a
+     * statically served file is always the one the writer stores for that
+     * visitor.
+     *
+     * @return string
+     */
+    function mobile_ua_legacy_pattern() {
+        return '(avantgo|bada/|blackberry|blazer|compal|elaine|fennec|hiptop|iemobile|ip(hone|od)|iris|kindle|lge |maemo|midp|mmp|netfront|opera m(ob|in)i|palm( os)?|phone|p(ixi|re)/|plucker|pocket|psp|series(4|6)0|symbian|treo|up\.(browser|link)|vodafone|wap|windows (ce|phone)|xda|xiino)';
     }
 
     /**
@@ -490,5 +499,80 @@ if ( ! function_exists( __NAMESPACE__ . '\\is_excluded_uri' ) ) {
         }
         $candidate = $config_dir . '/' . $host . '.php';
         return is_file( $candidate ) ? $candidate : '';
+    }
+
+    /**
+     * Value of the easyopt_user_role cookie for the logged-in cache.
+     *
+     * The tag (a role, or user-<id>) picks which cached copy a logged-in
+     * visitor gets, and the drop-in reads it before WordPress can check who
+     * the visitor is. Unsigned, anyone could name another role or user and
+     * read that copy, so the value carries an HMAC over the tag and the
+     * visitor's own login cookie.
+     *
+     * @since 2.8.0
+     * @param string $tag          Role tag ([a-z0-9_-]).
+     * @param string $login_cookie Value of the visitor's wordpress_logged_in_* cookie.
+     * @param string $secret       The easyopt_cache_li_secret option.
+     * @return string "tag.signature", or '' when any part is missing.
+     */
+    function logged_in_cookie_value( $tag, $login_cookie, $secret ) {
+        $tag = (string) $tag;
+        if ( '' === (string) $secret || '' === $tag || '' === (string) $login_cookie ) {
+            return '';
+        }
+        return $tag . '.' . substr( hash_hmac( 'sha256', 'cookie|' . $tag . '|' . (string) $login_cookie, (string) $secret ), 0, 32 );
+    }
+
+    /**
+     * The tag in the easyopt_user_role cookie, when its signature matches one
+     * of the visitor's unexpired wordpress_logged_in_* cookies. '' otherwise.
+     *
+     * @since 2.8.0
+     * @param array  $cookies     $_COOKIE-shaped map (unslashed).
+     * @param string $secret      The easyopt_cache_li_secret option.
+     * @param string $cookie_name Name of the role cookie.
+     * @return string
+     */
+    function verified_logged_in_tag( array $cookies, $secret, $cookie_name = 'easyopt_user_role' ) {
+        if ( '' === (string) $secret || ! isset( $cookies[ $cookie_name ] ) || ! is_string( $cookies[ $cookie_name ] ) ) {
+            return '';
+        }
+        $value = $cookies[ $cookie_name ];
+        $parts = explode( '.', $value );
+        if ( 2 !== count( $parts ) || '' === $parts[0] || preg_match( '/[^a-z0-9_\-]/i', $parts[0] ) ) {
+            return '';
+        }
+        foreach ( $cookies as $name => $login ) {
+            if ( 0 !== strpos( (string) $name, 'wordpress_logged_in_' ) || ! is_string( $login ) ) {
+                continue;
+            }
+            $fields = explode( '|', $login );
+            if ( count( $fields ) < 4 || (int) $fields[1] < time() ) {
+                continue;
+            }
+            if ( hash_equals( logged_in_cookie_value( $parts[0], $login, $secret ), $value ) ) {
+                return $parts[0];
+            }
+        }
+        return '';
+    }
+
+    /**
+     * The tag as it appears in a logged-in cache filename. Cache files sit
+     * under wp-content, where most servers hand them to anyone who asks for
+     * the path, so the name carries a part only this site can work out.
+     *
+     * @since 2.8.0
+     * @param string $tag    Role tag.
+     * @param string $secret The easyopt_cache_li_secret option.
+     * @return string '' when either is missing (the caller must then not cache).
+     */
+    function logged_in_file_tag( $tag, $secret ) {
+        $tag = (string) $tag;
+        if ( '' === (string) $secret || '' === $tag ) {
+            return '';
+        }
+        return $tag . '-' . substr( hash_hmac( 'sha256', 'file|' . $tag, (string) $secret ), 0, 16 );
     }
 }

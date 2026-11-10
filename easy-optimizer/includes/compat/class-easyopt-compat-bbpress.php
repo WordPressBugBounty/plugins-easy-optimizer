@@ -22,6 +22,11 @@
  * other post purge, on every change purge_for_post() handles: a new reply from
  * a logged-in user or a guest, an edit, approve, spam and trash.
  *
+ * (2.8.0) It also makes forum pages visit-only: cached when someone opens them,
+ * never warmed ahead. A large forum has tens of thousands of topic and reply
+ * URLs, most rarely read, and each reply purges the active ones again. The
+ * forums index stays warmable if a menu lists it.
+ *
  * @package EasyOptimizer
  * @since   2.7.4
  */
@@ -35,11 +40,68 @@ class EasyOpt_Compat_BBPress {
     /** Most linked posts purged for one topic. */
     const LINKED_POSTS_MAX = 20;
 
+    /** @var string[]|null See forum_bases(). */
+    private static $forum_bases = null;
+
     public static function init() {
         // Registered unconditionally and guarded per call: the filter only runs
         // inside a post purge, long after every plugin has loaded, so plugin
         // load order cannot matter.
         add_filter( 'easyopt_purge_post_archive_urls', array( __CLASS__, 'thread_urls' ), 10, 2 );
+        add_filter( 'easyopt_preload_visit_only_url', array( __CLASS__, 'visit_only_url' ), 10, 2 );
+        add_filter( 'easyopt_preload_exclude_taxonomies', array( __CLASS__, 'exclude_topic_tags' ) );
+    }
+
+    /**
+     * Forum, topic, reply, topic tag, profile, view and search pages. Strictly
+     * below each base, so a forums index sharing a base (root "forum" with the
+     * root prefix off) is not caught.
+     *
+     * @param bool   $visit_only Already visit-only?
+     * @param string $url        Absolute URL.
+     * @return bool
+     */
+    public static function visit_only_url( $visit_only, $url ) {
+        if ( $visit_only ) {
+            return true;
+        }
+        $path = strtolower( (string) wp_parse_url( $url, PHP_URL_PATH ) );
+        foreach ( self::forum_bases() as $base ) {
+            if ( strlen( rtrim( $path, '/' ) ) > strlen( rtrim( $base, '/' ) ) && 0 === strpos( $path, $base ) ) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Topic tag archives are listings like post tags, which the walk leaves out.
+     *
+     * @param string[] $taxonomies
+     * @return string[]
+     */
+    public static function exclude_topic_tags( $taxonomies ) {
+        if ( function_exists( 'bbp_get_topic_tag_tax_id' ) ) {
+            $taxonomies   = (array) $taxonomies;
+            $taxonomies[] = bbp_get_topic_tag_tax_id();
+        }
+        return $taxonomies;
+    }
+
+    /** @return string[] Lowercase URL paths, ending in a slash. Empty without bbPress. */
+    private static function forum_bases() {
+        if ( null !== self::$forum_bases ) {
+            return self::$forum_bases;
+        }
+        self::$forum_bases = array();
+        $home = rtrim( (string) wp_parse_url( home_url(), PHP_URL_PATH ), '/' );
+        foreach ( array( 'bbp_get_forum_slug', 'bbp_get_topic_slug', 'bbp_get_reply_slug', 'bbp_get_topic_tag_tax_slug', 'bbp_get_user_slug', 'bbp_get_view_slug', 'bbp_get_search_slug' ) as $slug_fn ) {
+            $slug = function_exists( $slug_fn ) ? trim( (string) $slug_fn(), '/' ) : '';
+            if ( '' !== $slug ) {
+                self::$forum_bases[] = strtolower( $home . '/' . $slug . '/' );
+            }
+        }
+        return self::$forum_bases;
     }
 
     /**

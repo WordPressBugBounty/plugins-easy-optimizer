@@ -92,12 +92,13 @@ class EasyOpt_Settings {
 
         // Module statuses.
         $modules = array(
-            array( 'opt' => 'easyopt_cache',          'title' => __( 'Page Cache', 'easy-optimizer' ),                      'tab' => 'cache',        'sub' => '' ),
-            array( 'opt' => 'easyopt_delay_js',       'title' => __( 'Delay Javascript', 'easy-optimizer' ),                'tab' => 'optimization', 'sub' => 'js' ),
-            array( 'opt' => 'easyopt_unused_css',     'title' => __( 'Remove Unused CSS', 'easy-optimizer' ),               'tab' => 'optimization', 'sub' => 'css' ),
-            array( 'opt' => 'easyopt_lazy_images',    'title' => __( 'Lazyload Images', 'easy-optimizer' ),                 'tab' => 'optimization', 'sub' => 'lazy' ),
-            array( 'opt' => 'easyopt_lcp_preload',    'title' => __( 'Preload Largest Contentful Paint', 'easy-optimizer' ),'tab' => 'optimization', 'sub' => 'lcp' ),
-            array( 'opt' => 'easyopt_img_opt',        'title' => __( 'Image Optimizer (CDN)', 'easy-optimizer' ),           'tab' => 'imgopt',       'sub' => '' ),
+            array( 'opt' => 'easyopt_cache',          'title' => __( 'Page Cache', 'easy-optimizer' ),                      'tab' => 'cache',        'sub' => 'page-cache' ),
+            array( 'opt' => 'easyopt_delay_js',       'title' => __( 'Delay Javascript', 'easy-optimizer' ),                'tab' => 'cssjs',        'sub' => 'js' ),
+            array( 'opt' => 'easyopt_defer_js',       'title' => __( 'Defer Javascript', 'easy-optimizer' ),                'tab' => 'cssjs',        'sub' => 'js' ),
+            array( 'opt' => 'easyopt_unused_css',     'title' => __( 'Remove Unused CSS', 'easy-optimizer' ),               'tab' => 'cssjs',        'sub' => 'css' ),
+            array( 'opt' => 'easyopt_lazy_images',    'title' => __( 'Lazyload Images', 'easy-optimizer' ),                 'tab' => 'media',        'sub' => 'lazy' ),
+            array( 'opt' => 'easyopt_lcp_preload',    'title' => __( 'Preload Largest Contentful Paint', 'easy-optimizer' ),'tab' => 'media',        'sub' => 'priority' ),
+            array( 'opt' => 'easyopt_img_opt',        'title' => __( 'Image Optimizer (CDN)', 'easy-optimizer' ),           'tab' => 'media',        'sub' => 'images' ),
         );
         foreach ( $modules as &$m ) { $m['enabled'] = (bool) (int) EasyOpt_Config::get( $m['opt'] ); }
 
@@ -143,6 +144,16 @@ class EasyOpt_Settings {
 
         $initial_data = array(
             'settings'  => $settings,
+            // (2.8.0) Credentials are write-only: the payload says which are
+            // set (with a masked hint), never their values.
+            'secrets'    => EasyOpt_Config::secret_hints(),
+            'secretKeys' => class_exists( 'EasyOpt_Rest_Dashboard' ) ? EasyOpt_Rest_Dashboard::secret_setting_keys() : EasyOpt_Config::secret_keys(),
+            // (2.8.0) One-click Delay exclusions offered on this site.
+            'delayOneclick' => class_exists( 'EasyOpt_Delay_Oneclick' ) ? EasyOpt_Delay_Oneclick::offered() : array(),
+            // (2.8.0) URL Inspector "Test this page" frame marker.
+            'pageTestNonce' => wp_create_nonce( 'easyopt_page_test' ),
+            // (2.8.0) Last CDN reachability check, per CDN.
+            'cdnHealth' => class_exists( 'EasyOpt_CDN_Assets' ) ? EasyOpt_CDN_Assets::health() : array(),
             'stats'     => $stats,
             'modules'   => $modules,
             'dbTasks'   => $db_tasks,
@@ -161,7 +172,7 @@ class EasyOpt_Settings {
             'wooActive'   => $is_woo,
             'safeMode'    => (bool) (int) get_option( 'easyopt_safe_mode_active', 0 ),
             'trackingOptin' => ( get_option( 'easyopt_tracking_optin', '' ) !== 'no' ),
-            // Where "Start free trial" sends people. The trial itself is run
+            // Where "Start Free" sends people. The trial itself is run
             // by Freemius, not by us, so this points at the Freemius-hosted
             // trial/checkout. Filterable so the URL is not hard-coded in JS.
             'trialUrl'  => apply_filters( 'easyopt_cloud_trial_url', 'https://fluxpress.io/pricing?utm_source=plugin&utm_medium=cloud_tab' ),
@@ -215,6 +226,7 @@ class EasyOpt_Settings {
                 <symbol id="eop-i-warn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></symbol>
                 <symbol id="eop-i-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></symbol>
                 <symbol id="eop-i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></symbol>
+                <symbol id="eop-i-minus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></symbol>
                 <symbol id="eop-i-ext" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></symbol>
                 <symbol id="eop-i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
                 <symbol id="eop-i-heart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></symbol>
@@ -227,6 +239,7 @@ class EasyOpt_Settings {
                          thirteen sidebar items rendering two pictures. With the
                          Advanced group collapsed by default the eight remaining
                          items each have to be recognisable on their own. */ ?>
+                <symbol id="eop-i-filter" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></symbol>
                 <symbol id="eop-i-layers" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></symbol>
                 <symbol id="eop-i-chip" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1.5"/><line x1="10" y1="2" x2="10" y2="6"/><line x1="14" y1="2" x2="14" y2="6"/><line x1="10" y1="18" x2="10" y2="22"/><line x1="14" y1="18" x2="14" y2="22"/><line x1="2" y1="10" x2="6" y2="10"/><line x1="2" y1="14" x2="6" y2="14"/><line x1="18" y1="10" x2="22" y2="10"/><line x1="18" y1="14" x2="22" y2="14"/></symbol>
                 <symbol id="eop-i-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="2 12 6 12 9 4 15 20 18 12 22 12"/></symbol>

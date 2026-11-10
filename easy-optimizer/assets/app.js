@@ -83,7 +83,8 @@ const trialLine = (days, gb) => (days || TRIAL_FALLBACK.days) + " days of the fu
     + (gb || TRIAL_FALLBACK.gb) + " GB. No card, and your site keeps working when it ends.";
 // ── REST API ──
 const api = {
-    get: (path) => fetch(CFG().restUrl + path, {
+    // On plain permalinks restUrl already has its "?" (index.php?rest_route=...).
+    get: (path) => fetch(CFG().restUrl + (CFG().restUrl.includes('?') ? path.replace('?', '&') : path), {
         credentials: 'same-origin',
         headers: { 'X-WP-Nonce': CFG().restNonce }
     }).then(r => r.json()).catch(() => null),
@@ -143,84 +144,136 @@ function startCloudUpgrade(plan, say) {
 // ── Helpers ──
 const Icon = ({ id, cls }) => (React.createElement("svg", { className: cls || 'eop-icon' }, React.createElement("use", { href: '#eop-i-' + id })));
 const nf = (n) => n != null && n.toLocaleString ? n.toLocaleString() : (n ?? '—');
-// ── NAV CONFIG (2.6.5) ──
+// ── Credentials (2.8.0) ──
+// Stored credentials never reach the browser. The server sends a map of which
+// are set, with a masked hint (window.__EASYOPT__.secrets, and `secrets` on
+// every settings response); the fields are write-only. Module-level so every
+// panel reads the latest map on its next render.
+let SECRET_HINTS = CFG().secrets || {};
+const secretHint = (k) => SECRET_HINTS[k] || '';
+const adoptSecrets = (r) => { if (r && r.secrets && typeof r.secrets === 'object' && !Array.isArray(r.secrets))
+    SECRET_HINTS = r.secrets; };
+// A write-only credential input. Typing a value makes it dirty and the normal
+// Save bar stores it; "Remove" clears the stored value right away (an empty
+// field is never a change, so the Save bar cannot express "delete").
+function SecretInput({ name, settings, onChange, type, placeholder, style }) {
+    const [, bump] = useState(0);
+    const hint = secretHint(name);
+    const value = settings[name] || '';
+    const remove = () => {
+        if (!confirm('Remove the saved value?'))
+            return;
+        api.post('/settings', { changes: { [name]: '' } }).then((r) => {
+            adoptSecrets(r);
+            onChange(name, '');
+            bump((n) => n + 1);
+        });
+    };
+    return React.createElement(Fragment, null, React.createElement("input", { type: type || "password", id: name, name: name, value: value, autoComplete: "new-password",
+        placeholder: hint ? 'Saved (' + hint + ') — type a new value to replace it' : (placeholder || ''),
+        onChange: (e) => onChange(name, e.target.value), style: style }), hint && !value && React.createElement("button", { type: "button", className: "button-link", style: { marginLeft: '10px', color: 'var(--eop-danger)' }, onClick: remove }, "Remove"));
+}
+// ── NAV CONFIG (2.8.0) ──
 //
-// Was 13 items across 7 groups — averaging 1.9 items per group, with
-// 'Performance' holding exactly one. 'Speed' / 'Performance' / 'Assets' /
-// 'Infrastructure' were four labels for one thing a beginner holds as "make
-// my site fast", and none of them predicted its contents: someone looking for
-// image settings had to guess between three groups. That is a taxonomy
-// failure, and it would still hurt at eight items.
+// A short sidebar, one item per section, with each section's pages as tabs
+// across the top of the content area. The tab bar does the job the collapsed
+// Advanced group used to do: the riskier pages sit one step further away, and
+// nothing is hidden from someone looking for it.
 //
-// Now 4 groups. Every item is kept and nothing is renamed — only regrouped —
-// so no existing user relearns a location and no support screenshot goes
-// stale. Fonts joins Speed (it is a front-end speed feature, and the panel
-// already cross-links into Optimization). Object Cache joins Advanced, which
-// removes the one-item group and the Speed/Performance ambiguity together.
-//
-// ADVANCED IS COLLAPSED BY DEFAULT (see collapsible). A beginner sees eight
-// items. That group holds the settings where a beginner does real damage —
-// Redis, Cloudflare, cron, and Bloat Removal's "Disable RSS Feeds" and
-// "Limit REST API to Logged-in Users", both of which carry breakage warnings —
-// and none of them are on the path to "my site is faster". Reading "Advanced"
-// and correctly inferring "not for me yet" is the feature, not a side effect.
-//
-// Icons: five of thirteen items used to share two glyphs (eop-i-cache and
-// eop-i-db are byte-identical; Dashboard and Backend Analyzer both used
-// gauge). Caching → layers, Object Cache → chip, Backend Analyzer → pulse.
+// Old and stored tab names are translated by resolveRoute(). The Backend
+// section's key is `server` because `backend` was the Backend Analyzer's, and
+// an upgrading site can still have that stored.
 const NAV = [
     { group: '', items: [{ key: 'dashboard', label: 'Dashboard', icon: 'gauge' }] },
     { group: 'Speed', items: [
-            { key: 'cache', label: 'Caching', icon: 'layers' },
-            { key: 'optimization', label: 'Optimization', icon: 'bolt' },
-            { key: 'imgopt', label: 'Image Optimization', icon: 'image' },
-            { key: 'fonts', label: 'Fonts', icon: 'font' },
+            { key: 'cache', label: 'Cache', icon: 'layers' },
+            { key: 'cssjs', label: 'Optimization', icon: 'bolt' },
+            { key: 'media', label: 'Media', icon: 'image' },
+            { key: 'cdn', label: 'Cloudflare & CDN', icon: 'cloud' },
         ] },
-    { group: 'Advanced', collapsible: true, items: [
-            { key: 'objectcache', label: 'Object Cache', icon: 'chip' },
-            { key: 'cloudflare', label: 'Cloudflare', icon: 'cloud' },
-            { key: 'bloat', label: 'Bloat Removal', icon: 'broom' },
-            { key: 'database', label: 'Database Optimization', icon: 'db' },
-            { key: 'heartbeat', label: 'Heartbeat & Cron', icon: 'heart' },
+    { group: 'Server', items: [
+            { key: 'server', label: 'Backend', icon: 'db' },
         ] },
     { group: 'Tools', items: [
-            { key: 'accessibility', label: 'Accessibility & SEO', icon: 'eye' },
-            { key: 'backend', label: 'Backend Analyzer', icon: 'pulse' },
+            { key: 'lighthouse', label: 'Lighthouse Fixes', icon: 'eye' },
+            { key: 'diagnostics', label: 'Diagnostics', icon: 'pulse' },
         ] },
     { group: '', items: [
-            // Cloud lives in the sidebar upgrade card / the ServiceBar, not as a
-            // plain nav row (differentiates free vs Pro). Kept in NAV so the tab
-            // still routes and the breadcrumb still resolves its label; `hidden`
-            // only stops it rendering as a sidebar link.
-            { key: 'flux', label: 'Cloud Optimization', icon: 'cloud', hidden: true },
+            { key: 'flux', label: 'Cloud Optimization', icon: 'cloud' },
             { key: 'settings', label: 'Settings', icon: 'gear' },
         ] },
 ];
-// Settings that, when on, mean this site is already using the Advanced group —
-// so an upgrading install never has its nav quietly fold up around features it
-// is actively running.
-const ADVANCED_ACTIVE_KEYS = [
-    'easyopt_object_cache', 'easyopt_cf_enabled', 'easyopt_bloat_heartbeat',
-];
-const OPT_SUBTABS = [
-    { key: 'js', label: 'JavaScript', icon: 'code' },
-    { key: 'css', label: 'CSS', icon: 'brush' },
-    { key: 'lazy', label: 'Lazy Load', icon: 'image' },
-    { key: 'lcp', label: 'Preload LCP', icon: 'zap' },
-    { key: 'prefetch', label: 'Prefetch Pages', icon: 'refresh' },
-];
-const DB_SUBTABS = [
-    { key: 'cleanup', label: 'Database Cleanup', icon: 'trash' },
-    { key: 'autoload', label: 'Autoload Health', icon: 'db' },
-];
+// Dashboard and Cloud Optimization are not here: they draw their own header.
+const SECTIONS = {
+    cache: { title: 'Cache', desc: 'Show visitors a saved copy instead of building each page again.', tabs: [
+            { key: 'page-cache', label: 'Page Cache', icon: 'layers', desc: 'Saves a ready-made copy of each page and shows it to later visitors, so WordPress doesn\'t rebuild it every time.' },
+            { key: 'warmup', label: 'Warm-up', icon: 'refresh', desc: 'Builds the cache in the background, so visitors almost never wait for a page to be built.' },
+            { key: 'rules', label: 'Rules', icon: 'filter', desc: 'Which pages, visitors and URL tags (like ?utm_source=) the cache treats differently.' },
+        ] },
+    cssjs: { title: 'Optimization', desc: "Send less code, hold back what isn't needed, and start loading the next page early.", tabs: [
+            { key: 'js', label: 'JavaScript', icon: 'code', desc: 'Hold scripts back so the page shows up first. Defer and Delay can run together.' },
+            { key: 'css', label: 'CSS', icon: 'brush', desc: 'Send each page only the styles it uses.' },
+            { key: 'prefetch', label: 'Prefetch Pages', icon: 'refresh', desc: 'Start loading the next page while the visitor is still deciding, so the click feels instant.' },
+        ] },
+    media: { title: 'Media', desc: "Smaller images, loaded only when needed, and fonts that never hide your text.", tabs: [
+            { key: 'images', label: 'Images', icon: 'image' },
+            { key: 'lazy', label: 'Lazy Load', icon: 'eye', desc: 'Loads images and videos only when visitors scroll near them, so the visible part appears first and LCP improves.' },
+            { key: 'priority', label: 'Preload LCP', icon: 'zap', desc: 'Load each page\'s main image first, so the biggest thing on screen shows up sooner.' },
+            { key: 'fonts', label: 'Fonts', icon: 'font', desc: 'Keep text visible while fonts load, and load only the fonts a page needs.' },
+        ] },
+    cdn: { title: 'Cloudflare & CDN', desc: 'Clear Cloudflare and server caches along with yours, and serve files from a CDN.' },
+    server: { title: 'Backend', desc: 'Keep WordPress light behind the scenes.', tabs: [
+            { key: 'database', label: 'Database Cleanup', icon: 'trash', desc: 'Shrink your database: delete revisions, trash, spam and expired transients.' },
+            { key: 'autoload', label: 'Autoload Health', icon: 'db', desc: 'WordPress loads autoloaded options (saved settings) on every page. If they grow too big, every page slows down.' },
+            { key: 'objectcache', label: 'Object Cache', icon: 'chip', desc: 'Redis object cache: keeps frequent database lookups in memory, speeding up WooCommerce and logged-in pages. Your host must provide Redis.' },
+            { key: 'heartbeat', label: 'Heartbeat & Cron', icon: 'heart', desc: 'Limit Heartbeat server load and control WP-Cron scheduled tasks.' },
+            { key: 'cleanup', label: 'WordPress Cleanup', icon: 'broom', desc: 'Turn off built-in WordPress features most sites don\'t use. Each switch works on its own.' },
+        ] },
+    diagnostics: { title: 'Diagnostics', desc: "See what Easy Optimizer does to a page and find what's slowing it down.", tabs: [
+            { key: 'inspector', label: 'URL Inspector', icon: 'info' },
+            { key: 'analyzer', label: 'Backend Analyzer', icon: 'pulse' },
+        ] },
+    lighthouse: { title: 'Lighthouse Fixes', desc: 'Fix common Lighthouse audits without touching your theme.' },
+    settings: { title: 'Settings', desc: 'Everything about the plugin itself.' },
+};
+const OLD_ROUTES = {
+    imgopt: ['media', 'images'], fonts: ['media', 'fonts'],
+    objectcache: ['server', 'objectcache'], database: ['server', 'database'],
+    heartbeat: ['server', 'heartbeat'], bloat: ['server', 'cleanup'],
+    cloudflare: ['cdn'], accessibility: ['lighthouse'],
+    backend: ['diagnostics', 'analyzer'], inspector: ['diagnostics', 'inspector'],
+    navigation: ['cssjs', 'prefetch'],
+};
+const OLD_OPT_ROUTES = {
+    js: ['cssjs', 'js'], css: ['cssjs', 'css'], lazy: ['media', 'lazy'],
+    lcp: ['media', 'priority'], prefetch: ['cssjs', 'prefetch'],
+};
+function resolveRoute(t, sub) {
+    let route = OLD_ROUTES[t] || [t, sub];
+    if (t === 'cache' && sub === 'purge-cdn') {
+        route = ['cdn'];
+    }
+    if (t === 'optimization') {
+        route = OLD_OPT_ROUTES[sub || localStorage.getItem('easyopt_opt_sub')] || OLD_OPT_ROUTES.js;
+    }
+    return (route[0] === 'dashboard' || route[0] === 'flux' || SECTIONS[route[0]]) ? route : ['dashboard'];
+}
 // ── Collapsible help ──
 function Collapsible({ title, children, defaultOpen }) {
     const [open, setOpen] = useState(!!defaultOpen);
     return (React.createElement("div", { className: `eop-collapsible ${open ? 'eop-collapsible--open' : ''}` }, React.createElement("button", { type: "button", className: "eop-collapsible__toggle", onClick: () => setOpen(!open) }, React.createElement(Icon, { id: open ? 'chev-down' : 'chev-right', cls: "eop-icon eop-icon--xs" }), React.createElement("span", null, title)), open && React.createElement("div", { className: "eop-collapsible__body" }, children)));
 }
 // ── Sub-tab navigation ──
-function SubTabNav({ tabs, active, onChange }) {
-    return (React.createElement("div", { className: "eop-subtabs" }, tabs.map((t) => (React.createElement("button", { key: t.key, type: "button", className: `eop-subtab ${active === t.key ? 'eop-subtab--active' : ''}`, onClick: () => onChange(t.key) }, t.icon && React.createElement(Icon, { id: t.icon, cls: "eop-icon eop-icon--sm" }), React.createElement("span", null, t.label))))));
+function SubTabNav({ tabs, active, onChange, page }) {
+    const box = useRef(null);
+    // The page tabs scroll sideways on a phone: keep the open one in view.
+    useEffect(() => {
+        const on = box.current && box.current.querySelector('.eop-subtab--active');
+        if (on && box.current.scrollWidth > box.current.clientWidth) {
+            box.current.scrollLeft += on.getBoundingClientRect().left - box.current.getBoundingClientRect().left;
+        }
+    }, [active]);
+    return (React.createElement("div", { ref: box, className: "eop-subtabs" + (page ? " eop-subtabs--page" : "") }, tabs.map((t) => (React.createElement("button", { key: t.key, type: "button", className: `eop-subtab ${active === t.key ? 'eop-subtab--active' : ''}`, onClick: () => onChange(t.key) }, t.icon && React.createElement(Icon, { id: t.icon, cls: "eop-icon eop-icon--sm" }), React.createElement("span", null, t.label))))));
 }
 // ── Popup Modal ──
 function PopupModal({ open, title, help, placeholder, value, onSave, onClose }) {
@@ -287,12 +340,12 @@ function Toast({ text, kind }) {
     return React.createElement("div", { className: `eop-toast eop-toast--visible ${kind ? 'eop-toast--' + kind : ''}`, role: "status", "aria-live": "polite" }, text);
 }
 // ── Field helpers ──
-function Check({ name, label, desc, settings, onChange, bold, cls, disabled }) {
-    const checked = Number(settings[name]) === 1;
+function Check({ name, label, desc, caution, badge, settings, onChange, bold, cls, disabled, on }) {
+    const checked = on !== undefined ? on : Number(settings[name]) === 1;
     const rowCls = "easyopt-field-row" + (disabled ? " easyopt-field-row--disabled" : "");
     return (React.createElement("div", { className: rowCls }, React.createElement("label", { className: cls }, React.createElement("input", { type: "checkbox", name: name, className: cls, value: "1", checked: checked, disabled: !!disabled, onChange: () => { if (disabled) {
             return;
-        } onChange(name, checked ? '0' : '1'); } }), bold ? React.createElement("strong", null, label) : label), desc && React.createElement("p", { className: "description" }, desc)));
+        } onChange(name, checked ? '0' : '1'); } }), bold ? React.createElement("strong", null, label, badge) : label), desc && React.createElement("p", { className: "description" }, desc), caution && React.createElement("p", { className: "eop-caution" }, React.createElement(Icon, { id: "warn", cls: "eop-icon eop-icon--xs" }), React.createElement("span", null, caution))));
 }
 function SelectField({ name, label, settings, onChange, options }) {
     return (React.createElement("div", { className: "easyopt-row" }, React.createElement("label", { htmlFor: name }, label), React.createElement("select", { id: name, name: name, value: settings[name] || '', onChange: (e) => onChange(name, e.target.value) }, options.map((o) => React.createElement("option", { key: o.value, value: o.value, disabled: o.disabled }, o.label)))));
@@ -300,6 +353,27 @@ function SelectField({ name, label, settings, onChange, options }) {
 // ── Dependency warning ──
 function DepWarning({ message, linkLabel, onLink }) {
     return (React.createElement("div", { className: "eop-dep-warning" }, React.createElement(Icon, { id: "warn", cls: "eop-icon eop-icon--sm" }), React.createElement("span", null, message), linkLabel && React.createElement("button", { type: "button", className: "eop-dep-warning__link", onClick: onLink }, linkLabel)));
+}
+// ── Settings cards (2.8.0) ──
+// One card per job on the settings pages. A master card's toggle sits beside
+// its title and its rows only show while it is on. They hold the same fields
+// as before (Check, SelectField, PopupField, PopupGrid), so saving is unchanged.
+function CardPage({ id, children }) {
+    return React.createElement("div", { style: { display: "block" }, className: "eop-panel eop-panel--cards", id: "eop-panel-" + id }, children);
+}
+function CardBadge({ text, tone }) {
+    return React.createElement("span", { className: "eop-badge eop-badge-" + (tone || 'info') }, text);
+}
+function Card({ title, badge, desc, action, children }) {
+    return React.createElement("section", { className: "eop-set" }, React.createElement("div", { className: "eop-set__top" }, React.createElement("h2", { className: "eop-set__title" }, title, badge), action), desc && React.createElement("p", { className: "eop-set__desc" }, desc), React.createElement("div", { className: "eop-set__rows" }, children));
+}
+function MasterCard({ name, title, badge, desc, settings, onChange, on, onToggle, disabled, always, children }) {
+    const checked = on !== undefined ? on : Number(settings[name]) === 1;
+    const rows = checked ? React.Children.toArray(children) : [];
+    return React.createElement("section", { className: "eop-set" }, React.createElement("div", { className: "eop-set__master" }, React.createElement("input", { type: "checkbox", id: name, name: name, value: "1", checked: checked, disabled: !!disabled, onChange: onToggle || (() => onChange(name, checked ? '0' : '1')) }), React.createElement("div", { className: "eop-set__head" }, React.createElement("h2", { className: "eop-set__title" }, React.createElement("label", { htmlFor: name }, title), badge), desc && React.createElement("p", { className: "eop-set__desc" }, desc))), (rows.length > 0 || always) && React.createElement("div", { className: "eop-set__rows eop-set__rows--under" }, rows, always));
+}
+function CardActions({ children }) {
+    return React.createElement("div", { className: "eop-set__actions" }, children);
 }
 // ═══════════════════════════════════════════════════
 //  DASHBOARD PANEL
@@ -390,7 +464,7 @@ function PsiBenchmark({ showToast: toast, data, refresh, onCloudways, dev, setDe
     // bring it back later. Hosting detection / Varnish purge are unaffected.
     const ENABLE_HOST_CTA = false;
     const showCTA = ENABLE_HOST_CTA && !onCloudways && typeof shownScore === 'number' && shownScore < 85;
-    return (React.createElement("div", { style: { border: '1px solid var(--eop-border, #e3e5e8)', borderRadius: '14px', padding: '20px', marginBottom: '22px' } }, React.createElement("div", { style: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '20px' } }, React.createElement("div", null, React.createElement("div", { style: { fontSize: '11px', fontWeight: 800, letterSpacing: '.07em', color: '#9aa1ad' } }, "GOOGLE PAGESPEED"), React.createElement("div", { style: { fontSize: '18px', fontWeight: 800, marginTop: '4px' } }, "Your speed, before and after")), React.createElement("div", { style: { display: 'inline-flex', gap: '4px', background: '#eef0f4', padding: '4px', borderRadius: '10px' } }, ['mobile', 'desktop'].map(s => React.createElement("button", { key: s, type: "button", onClick: () => setDev(s), style: { border: 'none', cursor: 'pointer', padding: '6px 14px', borderRadius: '7px', fontSize: '12px', fontWeight: 700, background: dev === s ? '#fff' : 'transparent', color: dev === s ? 'var(--eop-accent, #5b4ee8)' : '#6b7280', boxShadow: dev === s ? '0 1px 3px rgba(20,18,40,.12)' : 'none' } }, s === 'mobile' ? 'Mobile' : 'Desktop')))), React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '18px', marginBottom: '18px' } }, React.createElement(ScoreRing, { score: before ? before.score : null, faded: true, label: "Without Easy Optimizer" }), React.createElement("div", { style: { display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '0 4px' } }, React.createElement("div", { style: { fontSize: '30px', fontWeight: 800, color: delta !== null && delta >= 0 ? '#0c9d57' : '#e5484d', lineHeight: 1 } }, delta !== null ? (delta >= 0 ? '+' : '') + delta : '—'), React.createElement("div", { style: { color: '#9aa1ad', fontSize: '11px', fontWeight: 700, marginTop: '6px', letterSpacing: '.04em' } }, "POINTS")), React.createElement(ScoreRing, { score: after ? after.score : null, faded: false, label: "With Easy Optimizer" })), React.createElement("div", { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', background: 'var(--eop-bg-alt, #fafafb)', border: '1px solid var(--eop-border, #e3e5e8)', borderRadius: '10px', padding: '12px 14px' } }, vital('LCP', 'lcp'), vital('CLS', 'cls'), vital('INP', 'inp')), showCTA && React.createElement(HostingCTA, null), React.createElement(ReviewAsk, { data: data, settings: settings }), React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '12px', justifyContent: 'flex-end', marginTop: '14px', flexWrap: 'wrap' } }, running
+    return (React.createElement("div", { style: { border: '1px solid var(--eop-border, #e3e5e8)', borderRadius: '14px', padding: '20px', marginBottom: '22px' } }, React.createElement("div", { style: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '20px' } }, React.createElement("div", null, React.createElement("div", { style: { fontSize: '11px', fontWeight: 800, letterSpacing: '.07em', color: '#9aa1ad' } }, "GOOGLE PAGESPEED"), React.createElement("div", { style: { fontSize: '18px', fontWeight: 800, marginTop: '4px' } }, "Your speed, before and after")), React.createElement("div", { style: { display: 'inline-flex', gap: '4px', background: '#eef0f4', padding: '4px', borderRadius: '10px' } }, ['mobile', 'desktop'].map(s => React.createElement("button", { key: s, type: "button", onClick: () => setDev(s), style: { border: 'none', cursor: 'pointer', padding: '6px 14px', borderRadius: '7px', fontSize: '12px', fontWeight: 700, background: dev === s ? '#fff' : 'transparent', color: dev === s ? 'var(--eop-accent, #5b4ee8)' : '#6b7280', boxShadow: dev === s ? '0 1px 3px rgba(20,18,40,.12)' : 'none' } }, s === 'mobile' ? 'Mobile' : 'Desktop')))), React.createElement("div", { className: "eop-psi-rings" }, React.createElement(ScoreRing, { score: before ? before.score : null, faded: true, label: "Without Easy Optimizer" }), React.createElement("div", { style: { display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '0 4px' } }, React.createElement("div", { style: { fontSize: '30px', fontWeight: 800, color: delta !== null && delta >= 0 ? '#0c9d57' : '#e5484d', lineHeight: 1 } }, delta !== null ? (delta >= 0 ? '+' : '') + delta : '—'), React.createElement("div", { style: { color: '#9aa1ad', fontSize: '11px', fontWeight: 700, marginTop: '6px', letterSpacing: '.04em' } }, "POINTS")), React.createElement(ScoreRing, { score: after ? after.score : null, faded: false, label: "With Easy Optimizer" })), React.createElement("div", { className: "eop-psi-vitals" }, vital('LCP', 'lcp'), vital('CLS', 'cls'), vital('INP', 'inp')), showCTA && React.createElement(HostingCTA, null), React.createElement(ReviewAsk, { data: data, settings: settings }), job && job.died && React.createElement("p", { className: "eop-caution", style: { margin: '14px 0 0' } }, React.createElement(Icon, { id: "warn", cls: "eop-icon eop-icon--xs" }), React.createElement("span", null, job.message)), React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: '12px', justifyContent: 'flex-end', marginTop: '14px', flexWrap: 'wrap' } }, running
         ? React.createElement("span", { style: { display: 'inline-flex', alignItems: 'center', gap: '8px', color: 'var(--eop-accent, #5b4ee8)', fontSize: '13px', fontWeight: 600 } }, React.createElement("span", { className: "eop-spinner", "aria-hidden": "true" }), (job && job.status === 'running' && !job.cron_seen && (Math.floor(Date.now() / 1000) - (Number(job.started) || 0)) > 15
             ? "Testing your site… " + doneSteps + "/" + totalSteps + " done — running via your browser (wp-cron looks blocked by a firewall); keep this page open"
             : "Testing your site… " + doneSteps + "/" + totalSteps + " done (1\u20132 min — you can leave this page)"))
@@ -502,56 +576,9 @@ function CompatibilityCard() {
         return (React.createElement("li", { key: i, style: { display: 'flex', gap: '10px', alignItems: 'flex-start' } }, React.createElement("span", { style: { width: 7, height: 7, borderRadius: '50%', background: k.dot, flexShrink: 0, marginTop: '6px' }, title: k.label }), React.createElement("div", null, React.createElement("strong", null, it.title), " — ", React.createElement("span", { style: { color: 'var(--eop-text-muted, #666)' } }, it.detail), it.url ? React.createElement("a", { href: it.url, style: { marginLeft: '6px', whiteSpace: 'nowrap' } }, "Open its settings") : null)));
     }))));
 }
-// ── Sidebar group (2.6.5) ──
-// Plain groups render exactly as before. A `collapsible` group ships closed on
-// a fresh install so a beginner sees eight sidebar items instead of thirteen,
-// with three guards so it can never become a discoverability trap:
-//   1. it opens if any feature inside it is already switched on — an upgrading
-//      install never has its nav fold up around features it is running;
-//   2. it opens if the active tab lives inside it, so a deep link or a
-//      restored tab can never leave the user on a page whose nav entry is
-//      hidden;
-//   3. once the user opens or closes it, that choice is remembered.
-function NavGroup({ g, tab, switchTab, settings }) {
-    const storeKey = 'easyopt_nav_' + (g.group || 'bottom').toLowerCase();
-    const holdsActiveTab = g.items.some((i) => i.key === tab);
-    const usesAdvanced = ADVANCED_ACTIVE_KEYS.some((k) => Number(settings[k]) === 1);
-    const [open, setOpen] = useState(() => {
-        if (!g.collapsible) {
-            return true;
-        }
-        try {
-            const stored = localStorage.getItem(storeKey);
-            if (stored !== null) {
-                return stored === '1';
-            }
-        }
-        catch (e) { /* private mode — fall through to the computed default */ }
-        return holdsActiveTab || usesAdvanced;
-    });
-    useEffect(() => { if (holdsActiveTab && !open) {
-        setOpen(true);
-    } }, [holdsActiveTab]);
-    const toggle = () => {
-        const next = !open;
-        setOpen(next);
-        try {
-            localStorage.setItem(storeKey, next ? '1' : '0');
-        }
-        catch (e) { /* nothing to persist to; the session still works */ }
-    };
-    const items = g.items.filter((item) => !item.hidden).map((item) => (React.createElement("a", { href: "#", key: item.key, className: `eop-tab eop-nav__item ${tab === item.key ? 'active' : ''}`, "data-tab": item.key, onClick: (e) => { e.preventDefault(); switchTab(item.key); } }, React.createElement(Icon, { id: item.icon }), React.createElement("span", null, item.label))));
-    if (!g.collapsible) {
-        return (React.createElement("div", { className: "eop-nav__group" }, g.group && React.createElement("div", { className: "eop-nav__group-label" }, g.group), items));
-    }
-    // Rendered as a bordered, filled PILL (prototype variant A). A plain
-    // uppercase label that happened to toggle read as static text no matter how
-    // the chevron was placed — users did not know it was clickable. Giving it a
-    // real button chrome (border + surface fill) separates it unmistakably from
-    // the flat SPEED / TOOLS section labels: it looks like a control because it
-    // is one. A leading "layers" glyph anchors it, and the trailing chevron
-    // rotates on open. No item count — the user did not want a number.
-    return (React.createElement("div", { className: `eop-nav__group eop-nav__group--collapsible ${open ? 'is-open' : ''}` }, React.createElement("button", { type: "button", className: "eop-nav__group-toggle", onClick: toggle, "aria-expanded": open ? 'true' : 'false' }, React.createElement(Icon, { id: 'layers', cls: "eop-icon eop-nav__group-glyph" }), React.createElement("span", { className: "eop-nav__group-text" }, g.group), React.createElement(Icon, { id: 'chev-right', cls: "eop-icon eop-nav__group-chev" })), open && items));
+// ── Sidebar group ──
+function NavGroup({ g, tab, switchTab, cloudOn }) {
+    return (React.createElement("div", { className: "eop-nav__group" }, g.group && React.createElement("div", { className: "eop-nav__group-label" }, g.group), g.items.map((item) => (React.createElement("a", { href: "#", key: item.key, className: `eop-tab eop-nav__item ${tab === item.key ? 'active' : ''}`, "data-tab": item.key, onClick: (e) => { e.preventDefault(); switchTab(item.key); } }, React.createElement(Icon, { id: item.icon }), React.createElement("span", null, item.label), item.key === 'flux' && cloudOn !== null && React.createElement("span", { className: 'eop-navchip' + (cloudOn ? ' eop-navchip--on' : '') }, cloudOn ? 'On' : 'Off'))))));
 }
 function FixNextCard({ psiData, dev, switchTab, settings }) {
     const [showAll, setShowAll] = useState(false);
@@ -591,7 +618,10 @@ function FixNextCard({ psiData, dev, switchTab, settings }) {
         ? (tested ? 'From your ' + dev + ' test · ' + tested : 'From your last ' + dev + ' test')
         : 'Recommended next steps')));
     let body;
-    if (running && !items.length) {
+    if (!psiData) {
+        body = createElement('p', { className: 'description' }, 'Loading\u2026');
+    }
+    else if (running && !items.length) {
         body = createElement('div', { className: 'eop-empty-state' }, createElement('div', { className: 'eop-empty-state__icon' }, createElement('span', { className: 'eop-spinner', 'aria-hidden': 'true' })), createElement('div', { className: 'eop-empty-state__text' }, 'Testing your site — findings appear here when it finishes.'));
     }
     else if (!items.length) {
@@ -650,7 +680,9 @@ function DashboardPanel({ settings, stats, modules, switchTab, latestStats, show
         const hasAny = ['mobile', 'desktop'].some((s) => r[s] && (r[s].before || r[s].after));
         const jobRunning = psiData.job && psiData.job.status === 'running';
         const canRun = psiData.own_key ? psiData.own_key_valid : true;
-        if (!hasAny && !jobRunning && canRun) {
+        // A run that died would die again and spin for 10 minutes on every visit.
+        const jobDied = psiData.job && psiData.job.died;
+        if (!hasAny && !jobRunning && !jobDied && canRun) {
             baselineKicked.current = true;
             api.post('/psi/benchmark', {}).then(() => refreshPsi());
         }
@@ -715,7 +747,7 @@ function DashboardPanel({ settings, stats, modules, switchTab, latestStats, show
         if (ok !== null)
             setTimeout(() => setActionMsg({ text: '', ok: null }), 4000);
     };
-    const cfConnected = !!(settings.easyopt_cf_enabled && settings.easyopt_cf_api_token && settings.easyopt_cf_zone_id);
+    const cfConnected = !!(settings.easyopt_cf_enabled && (settings.easyopt_cf_api_token || secretHint('easyopt_cf_api_token')) && settings.easyopt_cf_zone_id);
     const clearCfCache = () => { setBusy('cf'); msg('Purging Cloudflare cache…', null); api.post('/cloudflare/purge').then((r) => { msg(r?.success ? 'Cloudflare cache purged.' : (r?.message || 'Failed.'), !!r?.success); }).finally(() => setBusy('')); };
     const clearCache = () => {
         setBusy('clear');
@@ -767,7 +799,7 @@ function DashboardPanel({ settings, stats, modules, switchTab, latestStats, show
     // get_module_statuses() still feeds `modules` either way.
     SHOW_FEATURE_STATUS_CARD
         ? React.createElement("div", { className: "eop-card" }, React.createElement("div", { className: "eop-card__header" }, React.createElement("div", null, React.createElement("div", { className: "eop-card__kicker" }, "Key Features"), React.createElement("div", { className: "eop-card__title" }, "Feature status"))), React.createElement("div", { className: "eop-module-list" }, (modules || []).map((m) => (React.createElement("div", { className: "eop-module", key: m.opt, style: { cursor: 'pointer' }, onClick: () => switchTab(m.tab, m.sub || undefined) }, React.createElement("div", { className: "eop-module__left" }, React.createElement("span", { className: "eop-switch eop-switch--readonly", "aria-hidden": "true" }, React.createElement("input", { type: "checkbox", disabled: true, checked: m.enabled }), React.createElement("span", null)), React.createElement("div", null, React.createElement("div", { className: "eop-module__title" }, m.title))), React.createElement("span", { className: "eop-module__link" }, React.createElement(Icon, { id: "chev-right", cls: "eop-icon eop-icon--sm" })))))))
-        : React.createElement(FixNextCard, { psiData: psiData, dev: psiDev, switchTab: switchTab, settings: settings }), React.createElement("div", { className: "eop-card" }, React.createElement("div", { className: "eop-card__header" }, React.createElement("div", null, React.createElement("div", { className: "eop-card__kicker" }, "Operations"), React.createElement("div", { className: "eop-card__title" }, "Quick actions"))), cacheOn && preloadOn && React.createElement(React.Fragment, null, React.createElement("button", { type: "button", className: "eop-btn eop-btn--primary eop-btn--full", disabled: !!busy, "aria-busy": busy === 'preload', onClick: startPreload }, React.createElement("span", { className: "eop-btn-icon" }, React.createElement(Icon, { id: "refresh" })), React.createElement("span", { className: "eop-btn-label" }, "Preload Cache"), React.createElement("span", { className: "eop-btn-spinner" })), React.createElement("button", { type: "button", className: "eop-btn eop-btn--ghost eop-btn--full", disabled: !!busy, "aria-busy": busy === 'both', onClick: clearAndPreload }, React.createElement("span", { className: "eop-btn-icon" }, React.createElement(Icon, { id: "trash" })), React.createElement("span", { className: "eop-btn-label" }, "Clear Cache & Preload"), React.createElement("span", { className: "eop-btn-spinner" })), cfConnected && React.createElement("button", { type: "button", className: "eop-btn eop-btn--ghost eop-btn--full", disabled: !!busy, "aria-busy": busy === 'cf', onClick: clearCfCache }, React.createElement("span", { className: "eop-btn-icon" }, React.createElement(Icon, { id: "cloud" })), React.createElement("span", { className: "eop-btn-label" }, "Clear Cloudflare Cache"), React.createElement("span", { className: "eop-btn-spinner" })), ps.status === 'paused' && React.createElement("div", { className: "eop-action-status", style: { color: '#d97706' } }, "Paused — server busy", ps.paused_reason ? ` (${ps.paused_reason})` : '', ". Resumes automatically.")), cacheOn && !preloadOn && React.createElement(React.Fragment, null, React.createElement("button", { type: "button", className: "eop-btn eop-btn--primary eop-btn--full", disabled: !!busy, onClick: clearCache }, React.createElement("span", { className: "eop-btn-icon" }, React.createElement(Icon, { id: "trash" })), React.createElement("span", { className: "eop-btn-label" }, "Clear Cache"), React.createElement("span", { className: "eop-btn-spinner" })), cfConnected && React.createElement("button", { type: "button", className: "eop-btn eop-btn--ghost eop-btn--full", disabled: !!busy, "aria-busy": busy === 'cf', onClick: clearCfCache }, React.createElement("span", { className: "eop-btn-icon" }, React.createElement(Icon, { id: "cloud" })), React.createElement("span", { className: "eop-btn-label" }, "Clear Cloudflare Cache"), React.createElement("span", { className: "eop-btn-spinner" }))), !cacheOn && React.createElement("div", { className: "eop-empty-state" }, React.createElement("div", { className: "eop-empty-state__icon" }, React.createElement(Icon, { id: "info" })), React.createElement("div", { className: "eop-empty-state__text" }, "Enable Page Cache in the Caching tab to access quick actions."), React.createElement("a", { href: "#", className: "eop-tab eop-btn eop-btn--soft eop-btn--sm", onClick: (e) => { e.preventDefault(); switchTab('cache'); } }, "Go to Caching")), React.createElement("div", { id: "eop-action-msg", className: "eop-action-msg", style: { color: actionMsg.ok === false ? 'var(--eop-danger)' : actionMsg.ok === true ? 'var(--eop-success)' : 'var(--eop-text-muted)' } }, actionMsg.text), 
+        : React.createElement(FixNextCard, { psiData: psiData, dev: psiDev, switchTab: switchTab, settings: settings }), React.createElement("div", { className: "eop-card" }, React.createElement("div", { className: "eop-card__header" }, React.createElement("div", null, React.createElement("div", { className: "eop-card__kicker" }, "Operations"), React.createElement("div", { className: "eop-card__title" }, "Quick actions"))), cacheOn && preloadOn && React.createElement(React.Fragment, null, React.createElement("button", { type: "button", className: "eop-btn eop-btn--primary eop-btn--full", disabled: !!busy, "aria-busy": busy === 'preload', onClick: startPreload }, React.createElement("span", { className: "eop-btn-icon" }, React.createElement(Icon, { id: "refresh" })), React.createElement("span", { className: "eop-btn-label" }, "Preload Cache"), React.createElement("span", { className: "eop-btn-spinner" })), React.createElement("button", { type: "button", className: "eop-btn eop-btn--ghost eop-btn--full", disabled: !!busy, "aria-busy": busy === 'both', onClick: clearAndPreload }, React.createElement("span", { className: "eop-btn-icon" }, React.createElement(Icon, { id: "trash" })), React.createElement("span", { className: "eop-btn-label" }, "Clear Cache & Preload"), React.createElement("span", { className: "eop-btn-spinner" })), cfConnected && React.createElement("button", { type: "button", className: "eop-btn eop-btn--ghost eop-btn--full", disabled: !!busy, "aria-busy": busy === 'cf', onClick: clearCfCache }, React.createElement("span", { className: "eop-btn-icon" }, React.createElement(Icon, { id: "cloud" })), React.createElement("span", { className: "eop-btn-label" }, "Clear Cloudflare Cache"), React.createElement("span", { className: "eop-btn-spinner" })), ps.status === 'paused' && React.createElement("div", { className: "eop-action-status", style: { color: '#d97706' } }, "Paused — server busy", ps.paused_reason ? ` (${ps.paused_reason})` : '', ". Resumes automatically.")), cacheOn && !preloadOn && React.createElement(React.Fragment, null, React.createElement("button", { type: "button", className: "eop-btn eop-btn--primary eop-btn--full", disabled: !!busy, onClick: clearCache }, React.createElement("span", { className: "eop-btn-icon" }, React.createElement(Icon, { id: "trash" })), React.createElement("span", { className: "eop-btn-label" }, "Clear Cache"), React.createElement("span", { className: "eop-btn-spinner" })), cfConnected && React.createElement("button", { type: "button", className: "eop-btn eop-btn--ghost eop-btn--full", disabled: !!busy, "aria-busy": busy === 'cf', onClick: clearCfCache }, React.createElement("span", { className: "eop-btn-icon" }, React.createElement(Icon, { id: "cloud" })), React.createElement("span", { className: "eop-btn-label" }, "Clear Cloudflare Cache"), React.createElement("span", { className: "eop-btn-spinner" }))), !cacheOn && React.createElement("div", { className: "eop-empty-state" }, React.createElement("div", { className: "eop-empty-state__icon" }, React.createElement(Icon, { id: "info" })), React.createElement("div", { className: "eop-empty-state__text" }, "Enable Page Cache in the Cache menu to access quick actions."), React.createElement("a", { href: "#", className: "eop-tab eop-btn eop-btn--soft eop-btn--sm", onClick: (e) => { e.preventDefault(); switchTab('cache', 'page-cache'); } }, "Go to Cache")), React.createElement("div", { id: "eop-action-msg", className: "eop-action-msg", style: { color: actionMsg.ok === false ? 'var(--eop-danger)' : actionMsg.ok === true ? 'var(--eop-success)' : 'var(--eop-text-muted)' } }, actionMsg.text), 
     // Pro upgrade card — inside the Quick actions card, below the buttons.
     // Hidden once connected, and once the mobile "after" score is
     // already 90+: the card's pitch is a 90+ score.
@@ -784,42 +816,150 @@ function DashboardPanel({ settings, stats, modules, switchTab, latestStats, show
 // ═══════════════════════════════════════════════════
 function CachePanel({ settings, onChange }) {
     const on = Number(settings.easyopt_cache) === 1;
-    return (React.createElement("div", { style: { display: "block" }, className: "eop-panel", id: "eop-panel-cache" }, React.createElement("h2", null, "Page Caching"), React.createElement("label", { className: "eop-cache-toggle" }, React.createElement("input", { type: "checkbox", name: "easyopt_cache", value: "1", checked: on, onChange: () => onChange('easyopt_cache', on ? '0' : '1') }), " Enable Page Cache"), React.createElement("p", { className: "description" }, "Saves the fully-optimized HTML to disk and serves it on subsequent visits — bypassing PHP, theme rendering and the database."), React.createElement(Collapsible, { title: "How does page caching work?" }, React.createElement("p", null, "When a visitor requests a page, WordPress normally boots PHP, queries the database, loads your theme, and renders the HTML from scratch — even if the page hasn't changed. With caching enabled, the first visit generates the HTML normally, but then saves a static copy to disk. Every subsequent visitor gets that pre-built HTML file directly, skipping the entire WordPress stack. This can reduce response time from 500ms+ to under 10ms."), React.createElement("p", null, React.createElement("strong", null, "Apache (.htaccess) mode"), " serves cached files before PHP even starts — the fastest option. ", React.createElement("strong", null, "PHP mode"), " works on all servers but still loads a tiny PHP bootstrap. Both produce identical HTML.")), !on && React.createElement("div", { className: "eop-cache-disabled-prompt" }, React.createElement("div", { className: "eop-prompt-icon" }, "\u26A1"), React.createElement("h3", null, "Caching is currently disabled"), React.createElement("p", null, "Enable Page Cache above to configure caching options.")), React.createElement("div", { className: "cachefield", style: !on ? { display: 'none' } : {} }, React.createElement(SelectField, { name: "easyopt_cache_mode", label: "Serving Mode", settings: settings, onChange: onChange, options: [
+    const loggedIn = Number(settings.easyopt_cache_logged_in) === 1;
+    const perUser = Number(settings.easyopt_cache_logged_in_per_user) === 1;
+    return (React.createElement(CardPage, { id: "cache" }, React.createElement(MasterCard, { name: "easyopt_cache", title: "Enable Page Cache", settings: settings, onChange: onChange, always: React.createElement(Collapsible, { title: "How does page caching work?" }, React.createElement("p", null, "Without caching, WordPress builds every page from scratch on each visit, even when nothing changed. With caching on, the first visit saves a ready-made copy and every later visitor gets it instantly. Pages can go from 500 ms+ to under 10 ms. Cart, checkout and My Account are never cached."), React.createElement("p", null, React.createElement("strong", null, "Apache (.htaccess) mode"), " serves cached pages before WordPress loads — fastest, Apache servers only. ", React.createElement("strong", null, "PHP mode"), " works on every server, with a tiny PHP step first. Both give visitors the same page.")) }, React.createElement(SelectField, { name: "easyopt_cache_mode", label: "Serving Mode", settings: settings, onChange: onChange, options: [
             { value: 'php', label: 'PHP (works everywhere)' },
-            { value: 'htaccess', label: '.htaccess rewrites (Apache, fastest)', disabled: !CFG().isApache },
+            { value: 'htaccess', label: '.htaccess (Apache servers, fastest)', disabled: !CFG().isApache },
         ] }), React.createElement(SelectField, { name: "easyopt_cache_ttl", label: "Cache Lifetime", settings: settings, onChange: onChange, options: [
-            { value: '0', label: 'Until cleared manually (recommended)' },
+            { value: '0', label: 'Until cleared (recommended)' },
             { value: '3600', label: '1 Hour' }, { value: '43200', label: '12 Hours' },
             { value: '86400', label: '1 Day' }, { value: '604800', label: '1 Week' },
-        ] }), React.createElement(Check, { name: "easyopt_cache_separate_mobile", label: "Separate Mobile Cache", bold: true, settings: settings, onChange: onChange, desc: "Create separate cache files for mobile and desktop." }), React.createElement(Check, { name: "easyopt_cache_logged_in", label: "Cache for Logged-in Users", bold: true, settings: settings, onChange: onChange, desc: "Not recommended for dynamic content." }), React.createElement(Collapsible, { title: "What does 'Cache for Logged-in Users' do?" }, React.createElement("p", null, "Creates role-based cache files (one per WordPress role: administrator, editor, subscriber, etc.). Dynamic per-user content like shopping carts, dashboards, or \"Hello, Username\" may display cached data from the wrong user. Only enable this on sites where logged-in pages show the same content to all users of the same role.")), React.createElement(Check, { name: "easyopt_cache_browser_caching", label: "Browser Caching", bold: true, settings: settings, onChange: onChange, desc: "Adds Expires + Cache-Control headers so browsers cache CSS/JS/fonts/images." }), React.createElement(Check, { name: "easyopt_cache_gzip", label: "Gzip / Brotli Compression", bold: true, settings: settings, onChange: onChange, desc: "Compresses your HTML, CSS, JS, JSON, SVG and fonts before sending them, so pages download faster." }), React.createElement(Check, { name: "easyopt_preconnect", label: "Preconnect to External Origins", bold: true, settings: settings, onChange: onChange, desc: "Connects early to external services like Google Fonts and CDNs so their files start loading sooner." }), React.createElement(Check, { name: "easyopt_cache_preload", label: "Preload Cache", bold: true, settings: settings, onChange: onChange, desc: "Warm the cache by crawling the site's sitemap." }), Number(settings.easyopt_cache_preload) === 1 && React.createElement("div", { style: { margin: '10px 0 6px 0' } }, React.createElement(SelectField, { name: "easyopt_cache_preload_speed", label: "Preload Speed", settings: settings, onChange: onChange, options: [
+        ] }), React.createElement(Check, { name: "easyopt_cache_separate_mobile", label: "Separate Mobile Cache", bold: true, settings: settings, onChange: onChange, desc: "Only needed if your theme shows phones a different page." }), React.createElement(Check, { name: "easyopt_cache_logged_in", label: "Cache for Logged-in Users", bold: true, settings: settings, onChange: onChange, desc: perUser ? "Logged-in visitors get cached pages too." : "Not for sites that show personal info.", caution: loggedIn && !perUser ? "Logged-in users with the same role (e.g. all Customers) share one cached copy. Carts, account pages or “Hello, Sam” could show one user's details to another, so only turn this on if logged-in pages are the same for everyone." : null }), loggedIn && React.createElement(Check, { name: "easyopt_cache_logged_in_per_user", label: "Separate Cache for Each User", bold: true, settings: settings, onChange: onChange, desc: "Each logged-in user gets their own cached copy, so no one sees another user's details. Uses more disk space." })), on && React.createElement(Card, { title: "Browser delivery" }, React.createElement(Check, { name: "easyopt_cache_browser_caching", label: "Browser Caching", bold: true, settings: settings, onChange: onChange, desc: "Lets browsers keep your images, CSS, JS and fonts for faster repeat visits." }), React.createElement(Check, { name: "easyopt_cache_gzip", label: "Gzip / Brotli Compression", bold: true, settings: settings, onChange: onChange, desc: "Shrinks pages, CSS, JS and fonts before sending them, so they download faster." })), 
+    // Preconnect works with Page Cache off too, so it is not inside the cards that need it.
+    React.createElement(MasterCard, { name: "easyopt_preconnect", title: "Preconnect", desc: "Connects early to outside services like Google Fonts and CDNs, so their files load sooner.", settings: settings, onChange: onChange }), (on && !CFG().isApache && CFG().nginxSnippet && String(settings.easyopt_cache_mode || 'php') === 'php') ? React.createElement("section", { className: "eop-set" }, React.createElement(Collapsible, { title: "Advanced: optional Nginx server rules", defaultOpen: false }, React.createElement("p", { className: "description" }, "Your cache is already working — nothing here is required. These optional rules let Nginx serve cached pages without starting PHP, which helps on busy sites. Many managed hosts don't allow server changes; if yours doesn't, just ignore this."), React.createElement("textarea", { readOnly: true, value: CFG().nginxSnippet, onFocus: (e) => e.target.select(), spellCheck: false, style: { width: '100%', minHeight: '200px', fontFamily: 'monospace', fontSize: '12px', marginTop: '8px' } }), React.createElement("p", { className: "description", style: { marginTop: '6px' } }, "Not sure? Send this to your host — it's a standard server-block change."))) : null));
+}
+function WarmupPanel({ settings, onChange, switchTab }) {
+    const cacheOn = Number(settings.easyopt_cache) === 1;
+    const on = Number(settings.easyopt_cache_preload) === 1;
+    const [stats, setStats] = useState(__eopStatsCache || CFG().stats || null);
+    const [busy, setBusy] = useState('');
+    const [msg, setMsg] = useState(null);
+    const refresh = useCallback(() => api.get('/dashboard-stats').then((r) => {
+        if (r) {
+            __eopStatsCache = r;
+            setStats(r);
+        }
+    }), []);
+    useEffect(() => { refresh(); }, []);
+    const ps = (stats && stats.preload_status) || {};
+    const active = ps.status === 'running' || ps.status === 'paused';
+    useEffect(() => {
+        if (!active)
+            return undefined;
+        const poll = setInterval(refresh, 20000);
+        return () => clearInterval(poll);
+    }, [active]);
+    const startPreload = () => {
+        setBusy('preload');
+        setMsg(null);
+        api.post('/cache/preload-start').then((r) => {
+            setMsg({ text: r?.success ? 'Preload started.' : (r?.message || 'Preload failed. Try again.'), ok: !!r?.success });
+            refresh();
+        }).finally(() => setBusy(''));
+    };
+    const clearAndPreload = () => {
+        setBusy('both');
+        setMsg(null);
+        api.post('/cache/clear').then(() => api.post('/cache/preload-start')).then(() => {
+            setMsg({ text: 'Cache cleared, preload started.', ok: true });
+            refresh();
+        }).catch(() => setMsg({ text: 'Preload failed. Try again.', ok: false })).finally(() => setBusy(''));
+    };
+    const total = Number(ps.total) || 0;
+    const done = Number(ps.done) || 0;
+    // (2.8.0) Status first, then numbers. A preload started by a visitor (one
+    // page's other device) runs with no total, and showed "No preload is
+    // running"; a finished run showed its old meter as if still going.
+    const waiting = Number(stats && stats.waiting) || 0;
+    const pagesCached = nf(stats && stats.pages) + ' pages cached';
+    const statusLine = active
+        ? 'Preloading. ' + nf(waiting) + (waiting === 1 ? ' page' : ' pages') + ' waiting, ' + pagesCached + '.'
+        : (ps.status === 'done' ? 'Preload finished. ' + pagesCached + '.' : pagesCached + '. No preload is running.');
+    return (React.createElement(CardPage, { id: "warmup" }, !cacheOn && React.createElement(DepWarning, { message: "Warm-up builds the page cache, so it needs Page Cache to be on.", linkLabel: "Go to Page Cache →", onLink: () => switchTab('cache', 'page-cache') }), React.createElement(MasterCard, { name: "easyopt_cache_preload", title: "Preload Cache", desc: "Builds the cache in the background from your home page, menus, pages and posts.", settings: settings, onChange: onChange }, React.createElement(SelectField, { name: "easyopt_cache_preload_speed", label: "Preload Speed", settings: settings, onChange: onChange, options: [
             { value: 'gentle', label: 'Gentle — one page at a time (best for shared hosting)' },
             { value: 'balanced', label: 'Balanced — up to 3 pages at a time (recommended)' },
             { value: 'turbo', label: 'Turbo — up to 5 pages at a time (VPS / managed)' },
-        ] })), React.createElement("h3", { style: { marginTop: '24px', marginBottom: '12px' } }, "Cache Exclusions"), React.createElement(PopupGrid, { entries: [
-            { name: 'easyopt_cache_exclude_urls', title: 'Excluded URLs', help: 'One URL fragment per line. Matching pages bypass cache.', placeholder: "/cart\n/checkout\n/my-account" },
-            { name: 'easyopt_cache_exclude_cookies', title: 'Excluded Cookies', help: 'Visitors with these cookies bypass cache.', placeholder: "my_custom_session" },
-            { name: 'easyopt_cache_strip_query_params', title: 'Ignored Query Parameters', help: 'IGNORED — every value shares ONE cache file.\n\n/page/?utm_source=google and /page/?utm_source=facebook are both served the cached copy of /page/. This is what keeps campaign links fast: without it, one newsletter send would split a page into thousands of separate cache files.\n\nAround 90 tracking parameters (utm_*, gclid, fbclid, msclkid…) are already ignored by default — add your own here, one per line.\n\nUse the other box, Cache Query String, when the parameter actually changes what the page shows.', placeholder: "my_tracking_param\npartner_id" },
-            { name: 'easyopt_cache_query_strings', title: 'Cache Query String', help: 'CACHED SEPARATELY — each value gets its OWN cache file.\n\nUse this when your server renders the parameter into the page: a form that writes UTM values into hidden fields, or a plugin that shows different content per ?ref=. /page/?utm_source=google and /page/?utm_source=facebook then get one cached copy each, instead of sharing one.\n\nListed here, a parameter also stops being ignored — so this is how you override one of the ~90 defaults.\n\nEmpty by default. Add only what your pages genuinely vary on, and list EVERY parameter your page reads: keying on utm_source alone still leaves utm_campaign showing the first visitor’s value.\n\nPer-click IDs (gclid, fbclid, msclkid, _ga…) are refused — their values are unique per visitor, so each one would create a cache file per visit and fill your disk.', placeholder: "utm_source\nutm_medium\nutm_campaign" },
-        ], cols: 2, settings: settings, onChange: onChange }), (!CFG().isApache && CFG().nginxSnippet && String(settings.easyopt_cache_mode || 'php') === 'php') ? React.createElement("div", { style: { marginTop: '20px' } }, React.createElement(Collapsible, { title: "Advanced: optional Nginx server rules", defaultOpen: false }, React.createElement("p", { className: "description" }, "Your cache is already working — nothing here is required. These optional rules let Nginx serve cached pages without starting PHP, which helps on busy sites. Many managed hosts don't allow server changes; if yours doesn't, just ignore this."), React.createElement("textarea", { readOnly: true, value: CFG().nginxSnippet, onFocus: (e) => e.target.select(), spellCheck: false, style: { width: '100%', minHeight: '200px', fontFamily: 'monospace', fontSize: '12px', marginTop: '8px' } }), React.createElement("p", { className: "description", style: { marginTop: '6px' } }, "Not sure? Send this to your host — it's a standard server-block change."))) : null)));
+        ] })), on && cacheOn && React.createElement(Card, { title: "Status" }, active && total > 0
+        ? React.createElement(Fragment, null, React.createElement("div", { className: "eop-set__meter" }, React.createElement("span", { style: { width: Math.min(100, Math.round(done / total * 100)) + '%' } })), React.createElement("p", { className: "description" }, nf(done) + ' of ' + nf(total) + ' pages cached'))
+        : React.createElement("p", { className: "description" }, statusLine), ps.status === 'paused' && React.createElement("p", { className: "eop-caution" }, React.createElement(Icon, { id: "warn", cls: "eop-icon eop-icon--xs" }), React.createElement("span", null, "Paused — server busy", ps.paused_reason ? ` (${ps.paused_reason})` : '', ". Resumes automatically.")), React.createElement(CardActions, null, React.createElement("button", { type: "button", className: "button button-primary", disabled: !!busy, onClick: startPreload }, busy === 'preload' ? 'Starting…' : 'Preload Cache'), React.createElement("button", { type: "button", className: "button button-secondary", disabled: !!busy, onClick: clearAndPreload }, busy === 'both' ? 'Clearing…' : 'Clear Cache & Preload'), msg && React.createElement("span", { style: { fontSize: '13px', color: msg.ok ? 'var(--eop-success)' : 'var(--eop-danger)' } }, msg.text)))));
+}
+function CacheRulesPanel({ settings, onChange, switchTab }) {
+    const cacheOn = Number(settings.easyopt_cache) === 1;
+    return (React.createElement(CardPage, { id: "rules" }, !cacheOn && React.createElement(DepWarning, { message: "These rules apply once Page Cache is on.", linkLabel: "Go to Page Cache →", onLink: () => switchTab('cache', 'page-cache') }), React.createElement(Card, { title: "Never cache" }, React.createElement(PopupGrid, { entries: [
+            { name: 'easyopt_cache_exclude_urls', title: 'Excluded URLs', help: 'One URL or part per line. Cart and checkout are already excluded.', placeholder: "/members/" },
+            { name: 'easyopt_cache_exclude_cookies', title: 'Excluded Cookies', help: 'Visitors with these cookies always get a fresh page.', placeholder: "my_custom_session" },
+        ], cols: 2, settings: settings, onChange: onChange })), React.createElement(Card, { title: "Query strings", desc: "About 90 tracking parameters (utm_*, gclid, fbclid…) are ignored by default, and your analytics still sees them. Each popup explains more." }, React.createElement(PopupGrid, { entries: [
+            { name: 'easyopt_cache_strip_query_params', title: 'Ignored Query Parameters', help: 'IGNORED — all values share one cached copy. /page/?utm_source=google and /page/?utm_source=facebook both get the cached /page/, so campaign links stay fast instead of splitting a page into thousands of copies. About 90 tracking parameters (utm_*, gclid, fbclid…) are ignored by default; add your own, one per line. If a parameter changes what the page shows, use Cache Query String instead.', placeholder: "my_tracking_param\npartner_id" },
+            { name: 'easyopt_cache_query_strings', title: 'Cache Query String', help: 'CACHED SEPARATELY — each value gets its own cached copy. Use it when the page itself changes with the parameter, e.g. a form that fills in UTM values, or content that changes per ?ref=. Adding a parameter here also stops it being ignored, which overrides a default. List every parameter the page uses: utm_source alone still shows the first visitor\'s utm_campaign. Per-click IDs (gclid, fbclid, msclkid, _ga…) can\'t be added: each visitor has a unique one, which would make a copy per visit and fill your disk.', placeholder: "utm_source\nutm_medium\nutm_campaign" },
+        ], cols: 2, settings: settings, onChange: onChange }))));
 }
 // ═══════════════════════════════════════════════════
-//  OPTIMIZATION — JAVASCRIPT sub-tab
+//  CSS & JAVASCRIPT — JAVASCRIPT tab
 // ═══════════════════════════════════════════════════
-function JsSubPanel({ settings, onChange }) {
+// (2.8.0) One-click Delay exclusions. Nothing is ticked for anyone; plugin
+// and theme rows only appear when that plugin or theme is active. Ticked ids
+// that are no longer offered (plugin deactivated) are kept as they are.
+// Analytics & Ads is the long list every site gets, so it stays shut until asked.
+const ONECLICK_GROUPS = [
+    { key: 'themes', label: 'Theme on this site' },
+    { key: 'plugins', label: 'Plugins on this site' },
+    { key: 'analytics', label: 'Exclude Analytics & Ads', collapsed: true },
+];
+function DelayOneclick({ settings, onChange }) {
+    const items = CFG().delayOneclick || [];
+    const picked = String(settings.easyopt_delay_js_oneclick || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    const ext = Number(settings.easyopt_delay_js_external_only) === 1;
+    const [open, setOpen] = useState(true);
+    const [shown, setShown] = useState({});
+    const toggle = (id) => {
+        const next = picked.includes(id) ? picked.filter(p => p !== id) : picked.concat(id);
+        onChange('easyopt_delay_js_oneclick', next.join('\n'));
+    };
+    const count = items.filter(it => picked.includes(it.id)).length + (ext ? 1 : 0);
+    const grid = (rows) => React.createElement("div", { className: "eop-oneclick__grid" }, rows.map(it => (React.createElement("label", { key: it.id }, React.createElement("input", { type: "checkbox", checked: picked.includes(it.id), onChange: () => toggle(it.id) }), React.createElement("span", null, it.label)))));
+    return (React.createElement("div", { className: "eop-oneclick" }, React.createElement("button", { type: "button", className: "eop-oneclick__head", "aria-expanded": open ? 'true' : 'false', onClick: () => setOpen(!open) }, React.createElement("strong", null, "One-click exclusions"), React.createElement(CardBadge, { tone: count ? 'info' : 'muted', text: count ? `${count} selected` : 'None selected' }), React.createElement(Icon, { id: open ? 'chev-down' : 'chev-right', cls: "eop-icon eop-icon--xs" })), open && React.createElement(Fragment, null, React.createElement("p", { className: "description" }, "Turn one on to exclude it from Delay, along with the scripts it needs. Use it for things that must work before the first click or scroll: visitor counting, a cookie banner, a slider at the top of the page."), React.createElement(Check, { name: "easyopt_delay_js_external_only", label: "Delay external scripts only", badge: React.createElement(CardBadge, { tone: "success", text: "Safest" }), bold: true, settings: settings, onChange: onChange, desc: "Scripts from other sites (analytics, ads, chat) wait for the first click or scroll. Your theme, plugins, WordPress and jQuery run as normal. Tracking snippets in the page stay delayed. Much less likely to break anything, but smaller score gains." }), ext && React.createElement("p", { className: "description" }, "With this on, your theme and plugins already run as normal, so most switches below change nothing. They still help with parts loaded from other sites, like a cookie banner."), ONECLICK_GROUPS.map(g => {
+        const rows = items.filter(it => it.group === g.key);
+        if (!rows.length)
+            return null;
+        if (!g.collapsed)
+            return (React.createElement("div", { key: g.key, className: "eop-oneclick__group" }, React.createElement("div", { className: "eop-oneclick__label" }, g.label), grid(rows)));
+        const on = rows.filter(it => picked.includes(it.id)).length;
+        return (React.createElement("div", { key: g.key, className: "eop-oneclick__group eop-oneclick__group--fold" }, React.createElement("button", { type: "button", className: "eop-oneclick__fold", "aria-expanded": shown[g.key] ? 'true' : 'false', onClick: () => setShown({ ...shown, [g.key]: !shown[g.key] }) }, React.createElement("span", { className: "eop-oneclick__label" }, g.label), on > 0 && React.createElement(CardBadge, { tone: "info", text: `${on} on` }), React.createElement(Icon, { id: shown[g.key] ? 'minus' : 'plus', cls: "eop-icon eop-icon--xs" })), shown[g.key] && grid(rows)));
+    }))));
+}
+// What the two toggles add up to. Defer marks every script it doesn't exclude;
+// Delay then holds back the ones it doesn't exclude, keeping Defer's order.
+function ScriptsFlow({ delay, defer, external }) {
+    const delayed = { tag: 'Delayed', tone: 'delayed', what: 'Wait for the first click, scroll or keypress.' };
+    const deferred = { tag: 'Deferred', tone: 'deferred', what: 'Download alongside the page, then run once the HTML is read.' };
+    const normal = { tag: 'Runs as normal', tone: 'normal', what: 'Loads and runs where it sits in the page.' };
+    const steps = delay && external ? (defer ? [['External scripts', delayed], ["Your site's scripts", deferred], ['Excluded from Defer', normal]] : [['External scripts', delayed], ["Your site's scripts", normal]])
+        : delay && defer ? [['Most scripts', delayed], ['Excluded from Delay', deferred], ['Excluded from both', normal]]
+            : delay ? [['Most scripts', delayed], ['Excluded from Delay', normal]]
+                : defer ? [['Most scripts', deferred], ['Excluded from Defer', normal]]
+                    : [['All scripts', { ...normal, what: 'Nothing is held back. Turn on Defer or Delay below.' }]];
+    return React.createElement("div", { className: "eop-flow" }, steps.map(([who, s]) => (React.createElement("div", { key: who, className: "eop-flow__step" }, React.createElement("div", { className: "eop-flow__who" }, who), React.createElement("span", { className: "eop-flow__tag eop-flow__tag--" + s.tone }, s.tag), React.createElement("div", { className: "eop-flow__what" }, s.what)))));
+}
+function JsSubPanel({ settings, onChange, switchTab }) {
+    // (2.8.0) Delay and Defer are two engines with their own toggles and
+    // exclusion lists, and can run together: Defer runs first and defers
+    // every script it doesn't exclude, then Delay holds back its share and
+    // keeps their defer order. Exclude jQuery and Exclude URLs are shared. The old Method dropdown is gone; a site that used
+    // "Defer" is migrated to the Defer toggle with the same exclusions.
     const dj = Number(settings.easyopt_delay_js) === 1;
-    return (React.createElement("div", null, React.createElement("h2", { className: "eop-section-h" }, "JavaScript Optimization"), React.createElement("label", null, React.createElement("input", { type: "checkbox", id: "easyopt_minify_js", name: "easyopt_minify_js", value: "1", checked: Number(settings.easyopt_minify_js) === 1, onChange: () => onChange('easyopt_minify_js', Number(settings.easyopt_minify_js) === 1 ? '0' : '1') }), " ", React.createElement("strong", null, "Minify JavaScript")), React.createElement("p", { className: "description" }, "Minifies all local JavaScript files."), React.createElement("label", { style: { marginTop: '16px' } }, React.createElement("input", { type: "checkbox", id: "easyopt_delay_js", name: "easyopt_delay_js", value: "1", checked: dj, onChange: () => onChange('easyopt_delay_js', dj ? '0' : '1') }), " ", React.createElement("strong", null, "Delay JavaScript Execution")), React.createElement("p", { className: "description" }, "Optimizes JS loading to improve page speed. Choose a method below."), React.createElement(Collapsible, { title: "Delay vs Defer — what's the difference?" }, React.createElement("p", null, React.createElement("strong", null, "Delay until interaction"), " rewrites all scripts so they don't load at all until the visitor clicks, scrolls, or presses a key. This gives the best PageSpeed scores because the browser can focus entirely on rendering the page. However, it can break features that depend on JavaScript running immediately (sliders, analytics tracking, popups, payment gateways)."), React.createElement("p", null, React.createElement("strong", null, "Defer (native browser defer)"), " adds the standard HTML ", React.createElement("code", null, "defer"), " attribute to scripts. They download in parallel with HTML parsing and execute after the document is parsed — but before user interaction. This is safer and rarely breaks anything, though the speed improvement is smaller."), React.createElement("p", null, React.createElement("strong", null, "Recommendation:"), " Start with Defer. If your site works fine, try Delay for better scores. Always test checkout and contact forms after switching.")), React.createElement("div", { className: "delayjsfield", style: !dj ? { display: 'none' } : {} }, React.createElement(SelectField, { name: "easyopt_delay_js_method", label: "Method", settings: settings, onChange: onChange, options: [{ value: 'delay', label: 'Delay until interaction (best scores)' }, { value: 'defer', label: 'Defer (native browser defer — safer)' }] }), settings.easyopt_delay_js_method === 'defer'
-        ? React.createElement("p", { className: "description", style: { marginTop: '-6px', fontSize: '12px', color: 'var(--eop-text-muted)' } }, "Adds the native ", React.createElement("code", null, "defer"), " attribute to external scripts. Scripts download in parallel and execute after HTML parsing.")
-        : React.createElement("p", { className: "description", style: { marginTop: '-6px', fontSize: '12px', color: 'var(--eop-text-muted)' } }, "Rewrites scripts to load only after user interaction (click, scroll, keypress). Most aggressive — best scores, but make sure everything is working."), React.createElement(Check, { name: "easyopt_delay_js_exclude_jquery", label: "Exclude jQuery", bold: true, settings: settings, onChange: onChange, desc: "Keeps jQuery and WordPress core scripts out of the delay/defer queue. Recommended for most sites." }), React.createElement(PopupGrid, { entries: [
-            { name: 'easyopt_delay_js_exclude', title: 'Exclude Scripts', help: 'Keywords to exclude from optimization (one per line). Matches against script src and inline content.', placeholder: "jquery.min.js\ngtag/js\nwoocommerce" },
-            { name: 'easyopt_delay_js_exclude_urls', title: 'Exclude URLs', help: 'Pages where JS optimization should not run.', placeholder: "/checkout/\n/cart/" },
-            ...(settings.easyopt_delay_js_method !== 'defer' ? [{ name: 'easyopt_delay_js_include_inline', title: 'Include Inline Scripts', help: 'Convert matching inline scripts to delayed external files.', placeholder: "gtag\nfbq" }] : []),
-        ], cols: settings.easyopt_delay_js_method !== 'defer' ? 3 : 2, settings: settings, onChange: onChange }))));
+    const df = Number(settings.easyopt_defer_js) === 1;
+    const jq = Number(settings.easyopt_delay_js_exclude_jquery) === 1;
+    const ext = Number(settings.easyopt_delay_js_external_only) === 1;
+    return (React.createElement(CardPage, { id: "js" }, React.createElement(Card, { title: "What happens to your scripts", action: React.createElement("button", { type: "button", className: "eop-btn eop-btn--ghost eop-btn--sm", title: "Test a page at desktop and phone width and see any JavaScript errors.", onClick: () => switchTab('diagnostics', 'inspector') }, React.createElement(Icon, { id: "info", cls: "eop-icon eop-icon--sm" }), "URL Inspector") }, React.createElement(ScriptsFlow, { delay: dj, defer: df, external: ext }), (dj || df) && jq && React.createElement("p", { className: "description", style: { marginTop: '10px' } }, "jQuery and WordPress core scripts keep running normally while Exclude jQuery is on."), React.createElement(Collapsible, { title: "Delay vs Defer — what's the difference?" }, React.createElement("p", null, React.createElement("strong", null, "Delay JavaScript Execution"), " makes scripts wait until the visitor clicks, scrolls or presses a key. This gives the best PageSpeed scores, because the browser can focus on showing the page. But it can break things that must work right away: sliders, analytics, popups and checkout payment buttons."), React.createElement("p", null, React.createElement("strong", null, "Defer JavaScript"), " adds the standard HTML ", React.createElement("code", null, "defer"), " attribute to scripts. They download alongside the page and run once the HTML is read, without waiting for a click. The speed gain is smaller. Scripts known to break when deferred are left alone, and page code that uses jQuery waits for it."), React.createElement("p", null, React.createElement("strong", null, "Both together:"), " delayed scripts run in Defer's order, and scripts you exclude from Delay are still deferred unless you exclude them from Defer too."), React.createElement("p", null, React.createElement("strong", null, "Recommendation:"), " Start with Defer. If your site works fine, add Delay for better scores. Always test checkout and contact forms after a change."))), React.createElement(MasterCard, { name: "easyopt_defer_js", title: "Defer JavaScript", badge: React.createElement(CardBadge, { text: "Start here" }), desc: "Adds the browser's standard defer attribute to script files, so they download alongside the page and run once the HTML is read.", settings: settings, onChange: onChange }, React.createElement(PopupField, { name: "easyopt_defer_js_exclude", title: "Exclude from Defer", help: "Script file names or URLs to keep out of Defer (one per line).", placeholder: "jquery.min.js\nmaps.googleapis.com", value: settings.easyopt_defer_js_exclude, onChange: onChange })), React.createElement(MasterCard, { name: "easyopt_delay_js", title: "Delay JavaScript Execution", badge: React.createElement(CardBadge, { text: "Best scores" }), desc: "Makes scripts wait until the visitor clicks, scrolls or presses a key. Best scores, but the most likely to break sliders, popups or checkout, so test them.", settings: settings, onChange: onChange }, React.createElement(DelayOneclick, { settings: settings, onChange: onChange }), React.createElement(PopupGrid, { entries: [
+            { name: 'easyopt_delay_js_exclude', title: 'Exclude from Delay', help: 'Script file names, URLs or code snippets to keep out of Delay (one per line). Scripts they depend on are kept out too.', placeholder: "jquery.min.js\ngtag/js\nwoocommerce" },
+            { name: 'easyopt_delay_js_include_inline', title: 'Include Inline Scripts', help: 'Moves matching scripts written in the page into delayed files.', placeholder: "gtag\nfbq" },
+        ], cols: 2, settings: settings, onChange: onChange })), (dj || df) && React.createElement(Card, { title: "Shared by Delay and Defer" }, React.createElement(Check, { name: "easyopt_delay_js_exclude_jquery", label: "Exclude jQuery", badge: React.createElement(CardBadge, { tone: "success", text: "Recommended" }), bold: true, settings: settings, onChange: onChange, desc: "Keeps jQuery (code most themes rely on) and WordPress core scripts running normally. Recommended for most sites." }), React.createElement(PopupField, { name: "easyopt_delay_js_exclude_urls", title: "Exclude URLs", help: "URLs (or parts) where Delay and Defer don't run.", placeholder: "/checkout/\n/cart/", value: settings.easyopt_delay_js_exclude_urls, onChange: onChange })), React.createElement(MasterCard, { name: "easyopt_minify_js", title: "Minify JavaScript", desc: "Shrinks your site's JS files (minify).", settings: settings, onChange: onChange })));
 }
 // ═══════════════════════════════════════════════════
-//  OPTIMIZATION — CSS sub-tab
+//  CSS & JAVASCRIPT — CSS tab
 // ═══════════════════════════════════════════════════
 function CssSubPanel({ settings, onChange }) {
-    const uc = Number(settings.easyopt_unused_css) === 1;
     const [cssMsg, setCssMsg] = useState('');
     const clearCSS = () => { setCssMsg('Clearing…'); api.post('/css/clear').then((r) => { setCssMsg(r?.message || 'Done!'); setTimeout(() => setCssMsg(''), 3000); }); };
     const behavior = settings.easyopt_unused_css_behavior || 'delayed';
@@ -833,25 +973,26 @@ function CssSubPanel({ settings, onChange }) {
         if (value === 'remove')
             onChange('easyopt_unused_css_post_types_only', '0');
     };
-    return (React.createElement("div", null, React.createElement("h2", { className: "eop-section-h" }, "Remove Unused CSS"), React.createElement("label", null, React.createElement("input", { type: "checkbox", id: "easyopt_minify_css", name: "easyopt_minify_css", value: "1", checked: Number(settings.easyopt_minify_css) === 1, onChange: () => onChange('easyopt_minify_css', Number(settings.easyopt_minify_css) === 1 ? '0' : '1') }), " ", React.createElement("strong", null, "Minify CSS")), React.createElement("p", { className: "description" }, "Minifies all local CSS stylesheets."), React.createElement("label", { style: { marginTop: '16px' } }, React.createElement("input", { type: "checkbox", id: "easyopt_unused_css", name: "easyopt_unused_css", value: "1", checked: uc, onChange: () => onChange('easyopt_unused_css', uc ? '0' : '1') }), " ", React.createElement("strong", null, "Enable Remove Unused CSS")), React.createElement("p", { className: "description" }, "Strips unused selectors per page type and injects only the used CSS."), React.createElement(Collapsible, { title: "How does Unused CSS removal work?" }, React.createElement("p", null, "WordPress themes and plugins load CSS for every feature they offer, even features not used on a given page. A typical page may load 300\u2013500 KB of CSS when only 30\u201350 KB is actually used. This module analyzes each page type (homepage, single posts, archives, etc.), identifies which CSS selectors are used in the HTML, and generates a slim \"used CSS\" file containing only those rules."), React.createElement("p", null, React.createElement("strong", null, "Inline"), " embeds the used CSS directly in the page — fastest for many sites. ", React.createElement("strong", null, "File"), " saves it as a separate cacheable .css file — better for large sites where the CSS exceeds ~500 KB, but may cause layout shift."), React.createElement("p", null, React.createElement("strong", null, "Stylesheet Behavior"), " controls what happens to the original full stylesheets:"), React.createElement("ul", { style: { margin: '8px 0', paddingLeft: '20px', fontSize: '13px' } }, React.createElement("li", null, React.createElement("strong", null, "Delay"), " — loads originals on user interaction (safest fallback)"), React.createElement("li", null, React.createElement("strong", null, "Async"), " — loads originals non-render-blocking same as Critical CSS"), React.createElement("li", null, React.createElement("strong", null, "Remove"), " — permanently strips originals (\u26A0 may break JS-injected styles)"))), React.createElement("div", { className: "unusedcssfield", style: !uc ? { display: 'none' } : {} }, React.createElement(SelectField, { name: "easyopt_unused_css_method", label: "CSS Delivery Method", settings: settings, onChange: onChange, options: [{ value: 'inline', label: 'Inline — fastest (embeds the CSS in the page)' }, { value: 'file', label: 'File (external .css file)' }] }), React.createElement(SelectField, { name: "easyopt_unused_css_behavior", label: "Stylesheet Behavior", settings: settings, onChange: onBehaviorChange, options: [{ value: 'delayed', label: 'Delay (load on interaction — safest)' }, { value: 'async', label: 'Async (non-render-blocking - same as critical CSS)' }, { value: 'remove', label: 'Remove (strip originals — ⚠ advanced)' }] }), isRemove && (React.createElement("div", { className: "eop-dep-warning", style: { borderColor: 'var(--eop-danger)' } }, React.createElement(Icon, { id: "warn", cls: "eop-icon eop-icon--sm" }), React.createElement("span", { style: { color: 'var(--eop-danger)' } }, "Warning: \"Remove\" permanently strips original stylesheets. Only the generated used CSS will load. Sites with JS-injected styles or dynamic class changes may break. Test thoroughly."))), React.createElement("div", { className: "easyopt-field-row" }, React.createElement("label", { style: isRemove ? { opacity: 0.5 } : {} }, React.createElement("input", { type: "checkbox", name: "easyopt_unused_css_post_types_only", value: "1", checked: postTypesOn, disabled: isRemove, onChange: () => onChange('easyopt_unused_css_post_types_only', postTypesOn ? '0' : '1') }), React.createElement("strong", null, "Process Post Types Only")), React.createElement("p", { className: "description" }, "Pages are skipped. Posts, Products, CPTs share one CSS per type. Enable this if you have many Posts, Categories, Tags, etc. — one Used CSS is shared across all Posts, Products, CPTs of that type. ", isRemove ? React.createElement("em", null, "(Disabled for the \"Remove\" behavior — per-page processing is required when originals are stripped.)") : null)), React.createElement(PopupGrid, { entries: [
-            { name: 'easyopt_unused_css_exclude_selectors', title: 'Exclude Selectors', help: 'CSS selectors to keep regardless of usage.', placeholder: ".my-class\n#my-id" },
-            { name: 'easyopt_unused_css_exclude_stylesheets', title: 'Exclude Stylesheets', help: 'Stylesheet handles or src fragments to skip. Also used by Minify CSS.', placeholder: "dashicons.min.css" },
-            { name: 'easyopt_unused_css_exclude_urls', title: 'Exclude URLs', help: 'Pages where unused-CSS processing should not run.', placeholder: "/checkout/" },
+    return (React.createElement(CardPage, { id: "css" }, React.createElement(MasterCard, { name: "easyopt_unused_css", title: "Remove Unused CSS", desc: "Loads only the CSS each type of page uses, instead of every style.", settings: settings, onChange: onChange, always: React.createElement(Collapsible, { title: "How does Remove Unused CSS work?" }, React.createElement("p", null, "Themes and plugins load CSS for every feature they have, even ones a page doesn't use. A page may load 300–500 KB of CSS but use only 30–50 KB. Remove Unused CSS checks each type of page (homepage, posts, archives…), finds the styles it really uses, and builds a small “used CSS” file with only those."), React.createElement("p", null, React.createElement("strong", null, "Inline"), " embeds the used CSS directly in the page — fastest for many sites. ", React.createElement("strong", null, "File"), " saves it as a separate .css file browsers can cache — better for very large CSS (over ~500 KB), but the layout may shift while loading."), React.createElement("p", null, React.createElement("strong", null, "Stylesheet Behavior"), " decides what happens to your original CSS files:"), React.createElement("ul", { style: { margin: '8px 0', paddingLeft: '20px', fontSize: '13px' } }, React.createElement("li", null, React.createElement("strong", null, "Delay"), " — loads originals on the visitor's first interaction"), React.createElement("li", null, React.createElement("strong", null, "Async"), " — loads them in the background, without slowing the page"), React.createElement("li", null, React.createElement("strong", null, "Remove"), " — never loads them (⚠ can break menus or sliders styled by JS)")))
+    }, React.createElement(SelectField, { name: "easyopt_unused_css_method", label: "CSS Delivery Method", settings: settings, onChange: onChange, options: [{ value: 'inline', label: 'Inline — fastest (embeds the CSS in the page)' }, { value: 'file', label: 'File (separate .css file)' }] }), React.createElement(SelectField, { name: "easyopt_unused_css_behavior", label: "Stylesheet Behavior", settings: settings, onChange: onBehaviorChange, options: [{ value: 'delayed', label: 'Delay (load on interaction)' }, { value: 'async', label: 'Async (load in the background, page doesn\'t wait)' }, { value: 'remove', label: 'Remove (never load them — ⚠ advanced)' }] }), isRemove && (React.createElement("div", { className: "eop-dep-warning", style: { borderColor: 'var(--eop-danger)' } }, React.createElement(Icon, { id: "warn", cls: "eop-icon eop-icon--sm" }), React.createElement("span", { style: { color: 'var(--eop-danger)' } }, "Warning: with “Remove”, your original CSS files never load; only the used CSS does. Menus, sliders or popups styled by JavaScript may lose their look. Test several pages."))), React.createElement(Check, { name: "easyopt_unused_css_post_types_only", label: "Process Post Types Only", bold: true, on: postTypesOn, disabled: isRemove, settings: settings, onChange: onChange, desc: "Each Page gets its own used CSS. Posts, products and other post types share one per type (all posts share one, all categories another). Best for sites with many posts, products or categories.", caution: isRemove ? "Not available with “Remove”: each page then needs its own used CSS." : null }), React.createElement(PopupGrid, { entries: [
+            { name: 'easyopt_unused_css_exclude_selectors', title: 'Exclude Selectors', help: 'CSS selectors to always keep, even if they look unused.', placeholder: ".my-class\n#my-id" },
+            { name: 'easyopt_unused_css_exclude_stylesheets', title: 'Exclude Stylesheets', help: 'CSS file handles or URL parts to leave out. Also used by Minify CSS.', placeholder: "dashicons.min.css" },
+            { name: 'easyopt_unused_css_exclude_urls', title: 'Exclude URLs', help: 'URLs (or parts) where Remove Unused CSS doesn\'t run.', placeholder: "/checkout/" },
             { name: 'easyopt_unused_css_include_inline', title: 'Include Inline Styles', help: 'Convert matching inline style tags to external files.', placeholder: "wp-custom-css" },
-            { name: 'easyopt_unused_css_passthrough_stylesheets', title: 'Keep Whole Stylesheets', help: 'Page-builder CSS that is already page-specific. Included in full, without removing unused selectors \u2014 safer for builders that add classes with JavaScript. /et-cache/ (Divi) is included by default.', placeholder: "/uploads/elementor/css/post-" },
-        ], cols: 3, settings: settings, onChange: onChange }), React.createElement("div", { className: "easyopt-field-row", style: { marginTop: '10px' } }, React.createElement("button", { type: "button", className: "button button-secondary", onClick: clearCSS }, "Clear Used CSS Cache"), React.createElement("span", { style: { marginLeft: '10px', color: 'green' } }, cssMsg)))));
+            { name: 'easyopt_unused_css_passthrough_stylesheets', title: 'Keep Whole Stylesheets', help: 'Page-builder CSS that\'s already made per page. Loaded in full, not trimmed — safer for builders that change classes with JavaScript. Divi\'s /et-cache/ is included by default.', placeholder: "/uploads/elementor/css/post-" },
+        ], cols: 2, settings: settings, onChange: onChange }), React.createElement(CardActions, null, React.createElement("button", { type: "button", className: "button button-secondary", onClick: clearCSS }, "Clear Used CSS Cache"), cssMsg && React.createElement("span", { style: { color: 'var(--eop-success)', fontSize: '13px' } }, cssMsg))), React.createElement(MasterCard, { name: "easyopt_minify_css", title: "Minify CSS", desc: "Shrinks your site's CSS files (minify).", settings: settings, onChange: onChange })));
 }
 // ═══════════════════════════════════════════════════
-//  OPTIMIZATION — LAZYLOAD sub-tab
+//  MEDIA — LAZY LOAD tab
 // ═══════════════════════════════════════════════════
 function LazySubPanel({ settings, onChange }) {
     const li = Number(settings.easyopt_lazy_images) === 1;
     const lf = Number(settings.easyopt_lazy_iframes) === 1;
     const lv = Number(settings.easyopt_lazy_videos) === 1;
-    const anyLazy = li || lf || lv;
-    const ad = Number(settings.easyopt_add_missing_dims) === 1;
+    const lb = Number(settings.easyopt_lazy_css_bg) === 1;
+    const anyLazy = li || lf || lv || lb;
     const ln = Number(settings.easyopt_lazy_native ?? 1) === 1;
-    return (React.createElement("div", null, React.createElement("h2", { className: "eop-section-h" }, "Lazy Load"), React.createElement("p", { className: "description", style: { marginBottom: '14px' } }, "Defer loading of offscreen media so the browser focuses on visible content first. Reduces initial page weight and speeds up Largest Contentful Paint."), React.createElement(Collapsible, { title: "How does lazy loading improve performance?" }, React.createElement("p", null, "By default, browsers download every image, iframe, and video on a page before displaying it — even images far below the fold that the visitor may never scroll to. Lazy loading tells the browser to only download media when it's about to enter the viewport (visible area). This reduces initial bandwidth, speeds up rendering, and improves Core Web Vitals — especially LCP and Speed Index."), React.createElement("p", null, "The \"Exclude First N Images\" setting is important: images visible immediately (your hero image, logo) should NOT be lazy-loaded because they're needed for the initial paint. Setting this to 1\u20133 ensures above-the-fold images load eagerly.")), React.createElement("label", null, React.createElement("input", { type: "checkbox", className: "eop-lazy-toggle", name: "easyopt_lazy_images", value: "1", checked: li, onChange: () => onChange('easyopt_lazy_images', li ? '0' : '1') }), " ", React.createElement("strong", null, "Lazy Load Images")), React.createElement("p", { className: "description" }, "Defers offscreen images and background images."), React.createElement("div", { className: "lazyfield", style: !li ? { display: 'none' } : { marginBottom: '10px' } }, React.createElement("label", null, React.createElement("input", { type: "checkbox", name: "easyopt_lazy_native", value: "1", checked: ln, onChange: () => onChange('easyopt_lazy_native', ln ? '0' : '1') }), " ", React.createElement("strong", null, "Browser-native lazy load"), " ", React.createElement("span", { className: "eop-badge" }, "Recommended")), React.createElement("p", { className: "description" }, "Lazy loads images using the browser's built-in method — faster and needs no extra JavaScript.")), React.createElement("label", null, React.createElement("input", { type: "checkbox", className: "eop-lazy-toggle", name: "easyopt_lazy_iframes", value: "1", checked: lf, onChange: () => onChange('easyopt_lazy_iframes', lf ? '0' : '1') }), " ", React.createElement("strong", null, "Lazy Load Iframes")), React.createElement("p", { className: "description" }, "Defers iframes (YouTube, maps, etc.)."), React.createElement("label", null, React.createElement("input", { type: "checkbox", className: "eop-lazy-toggle", name: "easyopt_lazy_videos", value: "1", checked: lv, onChange: () => onChange('easyopt_lazy_videos', lv ? '0' : '1') }), " ", React.createElement("strong", null, "Lazy Load Videos")), React.createElement("div", { className: "lazyfield", style: !anyLazy ? { display: 'none' } : {} }, React.createElement(PopupField, { name: "easyopt_lazyload_exclude", title: "Exclude from Lazy Load", help: "Class names or URL fragments to skip.", placeholder: "logo\nhero-image", value: settings.easyopt_lazyload_exclude, onChange: onChange }), React.createElement("div", { className: "easyopt-field-row" }, React.createElement("label", null, React.createElement("strong", null, "Exclude First N Images")), React.createElement("input", { type: "number", name: "easyopt_lazyload_exclude_first", value: settings.easyopt_lazyload_exclude_first ?? 1, onChange: (e) => onChange('easyopt_lazyload_exclude_first', e.target.value), min: "0", step: "1", style: { width: '80px' } }), React.createElement("p", { className: "description", style: { marginTop: '4px' } }, "Images above the fold should not be lazy-loaded. Set to the number of images visible without scrolling."))), React.createElement("div", { style: { marginTop: '24px', paddingTop: '18px', borderTop: '1px solid var(--eop-border-soft)' } }, React.createElement("label", null, React.createElement("input", { type: "checkbox", name: "easyopt_add_missing_dims", value: "1", checked: ad, onChange: () => onChange('easyopt_add_missing_dims', ad ? '0' : '1') }), " ", React.createElement("strong", null, "Add Missing Image Dimensions")), React.createElement("p", { className: "description" }, "Reads actual image files to add missing width/height attributes. Prevents CLS (Cumulative Layout Shift)."), React.createElement("div", { className: "adddimsfield", style: !ad ? { display: 'none' } : {} }, React.createElement(PopupField, { name: "easyopt_dims_exclude", title: "Exclude from Missing Dimensions", help: "Class names, src fragments to skip.", placeholder: "logo\nsvg-icon", value: settings.easyopt_dims_exclude, onChange: onChange })))));
+    return (React.createElement(CardPage, { id: "lazy" }, React.createElement(Card, { title: "Images" }, React.createElement(Check, { name: "easyopt_lazy_images", label: "Lazy Load Images", bold: true, settings: settings, onChange: onChange, desc: "Loads images and backgrounds when visitors scroll near them." }), li && React.createElement("div", { className: "eop-set__child" }, React.createElement(Check, { name: "easyopt_lazy_native", label: "Browser-native lazy load", badge: React.createElement(CardBadge, { tone: "success", text: "Recommended" }), bold: true, on: ln, settings: settings, onChange: onChange, desc: "Uses the browser's built-in lazy loading — faster, with no extra JavaScript." })), React.createElement(Check, { name: "easyopt_lazy_css_bg", label: "Lazy Load CSS Background Images", bold: true, settings: settings, onChange: onChange, desc: "Also lazy loads background images set in CSS, including inlined used CSS. A background at the top of the page (like a banner) may appear a moment later — add it to Exclude from Lazy Load." }), React.createElement(Collapsible, { title: "How does lazy loading improve performance?" }, React.createElement("p", null, "Without lazy loading, browsers download every image, iframe and video as the page opens — even ones far down that visitors may never see. Lazy loading waits until each one is about to scroll into view. Pages open faster and use less data, which helps Core Web Vitals like LCP."), React.createElement("p", null, "Set “Exclude First Images” to 1–3: images visitors see right away (your logo, top banner) should not be lazy loaded, so they show without delay."))), React.createElement(Card, { title: "Iframes and videos" }, React.createElement(Check, { name: "easyopt_lazy_iframes", label: "Lazy Load Iframes", bold: true, settings: settings, onChange: onChange, desc: "Lazy loads YouTube, maps and other iframes." }), lf && React.createElement("div", { className: "eop-set__child" }, React.createElement(Check, { name: "easyopt_lazy_youtube", label: "Replace YouTube videos with a preview image", bold: true, settings: settings, onChange: onChange, desc: "Shows the video's thumbnail and loads the player only when a visitor clicks play. Videos controlled by a script, playlists and autoplaying videos are left as they are." })), React.createElement(Check, { name: "easyopt_lazy_videos", label: "Lazy Load Videos", bold: true, settings: settings, onChange: onChange })), anyLazy && React.createElement(Card, { title: "Exclusions" }, React.createElement("div", { className: "easyopt-row" }, React.createElement("label", { htmlFor: "easyopt_lazyload_exclude_first" }, "Exclude First Images"), React.createElement("input", { type: "number", id: "easyopt_lazyload_exclude_first", name: "easyopt_lazyload_exclude_first", value: settings.easyopt_lazyload_exclude_first ?? 1, onChange: (e) => onChange('easyopt_lazyload_exclude_first', e.target.value), min: "0", step: "1" }), React.createElement("p", { className: "description" }, "Images visible without scrolling (above the fold) shouldn't lazy load. Enter how many there are.")), React.createElement(PopupField, { name: "easyopt_lazyload_exclude", title: "Exclude from Lazy Load", help: "Image class names or URL parts to skip.", placeholder: "logo\nhero-image", value: settings.easyopt_lazyload_exclude, onChange: onChange })), React.createElement(MasterCard, { name: "easyopt_add_missing_dims", title: "Add Missing Image Dimensions", desc: "Adds missing width and height to images, so the page doesn't jump while loading (fixes CLS).", settings: settings, onChange: onChange }, React.createElement(PopupField, { name: "easyopt_dims_exclude", title: "Exclude from Missing Dimensions", help: "Image class names or URL parts to skip.", placeholder: "logo\nsvg-icon", value: settings.easyopt_dims_exclude, onChange: onChange }))));
 }
 // ═══════════════════════════════════════════════════
 //  Small REST-backed "clear data" button (transient feedback)
@@ -892,60 +1033,48 @@ function EopClearButton({ label, path, busyLabel, doneLabel, confirm }) {
     }, msg)));
 }
 // ═══════════════════════════════════════════════════
-//  OPTIMIZATION — PRELOAD LCP sub-tab
+//  MEDIA — PRIORITY tab
 // ═══════════════════════════════════════════════════
 function LcpSubPanel({ settings, onChange }) {
-    const on = Number(settings.easyopt_lcp_preload) === 1;
-    return (React.createElement("div", null, React.createElement("h2", { className: "eop-section-h" }, "LCP Optimization"), React.createElement("label", null, React.createElement("input", { type: "checkbox", id: "easyopt_lcp_preload", name: "easyopt_lcp_preload", value: "1", checked: on, onChange: () => onChange('easyopt_lcp_preload', on ? '0' : '1') }), " ", React.createElement("strong", null, "Auto Preload Largest Image")), React.createElement("p", { className: "description" }, "Finds each page's largest image (the one visitors notice first) and preloads it at high priority."), React.createElement(EopClearButton, {
-        label: "Clear all LCP data",
-        path: "/lcp/clear",
-        busyLabel: "Clearing…",
-        doneLabel: "LCP data cleared \u2713",
-        confirm: "Clear all detected LCP images for every page type? They will be re-detected on the next visits."
-    }), React.createElement(Collapsible, { title: "How does LCP detection work?" }, React.createElement("p", null, "The Largest Contentful Paint (LCP) is the largest visible image or text block in the viewport — it's one of Google's three Core Web Vitals. This module uses a lightweight JavaScript beacon (PerformanceObserver) to detect which image is the LCP element on each page type."), React.createElement("p", null, React.createElement("strong", null, "First visit:"), " The beacon observes the page and reports the LCP image back to the server. This is the \"training\" visit — no optimization happens yet."), React.createElement("p", null, React.createElement("strong", null, "Subsequent visits:"), " A ", React.createElement("code", null, "<link rel=\"preload\">"), " tag with ", React.createElement("code", null, "fetchpriority=\"high\""), " is injected into <head> for the detected LCP image, and the matching <img> tag gets ", React.createElement("code", null, "loading=\"eager\""), ". Results are stored per URL type and viewport (mobile/desktop) with a 30-day refresh cycle.")), React.createElement("div", { className: "lcppreloadfield", style: !on ? { display: 'none' } : {} }, React.createElement(PopupField, { name: "easyopt_lcp_exclude_urls", title: "Exclude URLs", help: "Pages where LCP detection should not run.", placeholder: "/checkout/\n/cart/", value: settings.easyopt_lcp_exclude_urls, onChange: onChange }))));
+    return (React.createElement(CardPage, { id: "priority" }, React.createElement(MasterCard, { name: "easyopt_lcp_preload", title: "Auto Preload Largest Image", desc: "Finds the biggest image visitors see first on each page and loads it at high priority.", settings: settings, onChange: onChange, always: React.createElement(Fragment, null, React.createElement(EopClearButton, {
+            label: "Clear all LCP data",
+            path: "/lcp/clear",
+            busyLabel: "Clearing…",
+            doneLabel: "LCP data cleared ✓",
+            confirm: "Clear all detected LCP images for every page type? They will be re-detected on the next visits."
+        }), React.createElement(Collapsible, { title: "How does LCP detection work?" }, React.createElement("p", null, "Largest Contentful Paint (LCP) is the biggest image or text block visitors see when a page opens — one of Google's three Core Web Vitals. A small script spots which image that is on each page type."), React.createElement("p", null, React.createElement("strong", null, "First visit:"), " The script watches the page and reports the LCP image back to your site. Nothing is optimized on this first visit."), React.createElement("p", null, React.createElement("strong", null, "Subsequent visits:"), " A ", React.createElement("code", null, "<link rel=\"preload\">"), " tag with ", React.createElement("code", null, "fetchpriority=\"high\""), " is injected into <head> for the detected LCP image, and the matching <img> tag gets ", React.createElement("code", null, "loading=\"eager\""), ". Results are saved per page type, separately for mobile and desktop, and refreshed every 30 days."))) }, React.createElement(PopupField, { name: "easyopt_lcp_exclude_urls", title: "Exclude URLs", help: "URLs (or parts) where LCP detection doesn't run.", placeholder: "/checkout/\n/cart/", value: settings.easyopt_lcp_exclude_urls, onChange: onChange }))));
 }
 // ═══════════════════════════════════════════════════
-//  OPTIMIZATION — PREFETCH PAGES sub-tab
+//  NAVIGATION — PREFETCH PAGES
 // ═══════════════════════════════════════════════════
 function PrefetchSubPanel({ settings, onChange }) {
-    const on = Number(settings.easyopt_instant_preload) === 1;
-    return (React.createElement("div", null, React.createElement("h2", { className: "eop-section-h" }, "Prefetch Pages"), React.createElement("p", { className: "description", style: { marginTop: 0 } }, "Start loading the next page while the visitor is still deciding, so the click feels instant."), React.createElement(Collapsible, { title: "How does page prefetching work?" }, React.createElement("p", null, "Easy Optimizer writes a small set of ", React.createElement("strong", null, "speculation rules"), " into the top of every page. The browser reads them while it is still parsing the HTML, then watches the visitor and decides for itself when to start loading a link — including how many pages it can afford to load at once on this device and connection."), React.createElement("p", null, "On top of that, Easy Optimizer makes its own predictions and tells the browser to start immediately. Once the page is idle it finds the destination your page links to most often — the one in your header, hero button and footer — and starts that one with no interaction at all. It also watches for a “Next page” link, a dropdown or mobile menu opening, the pointer coming to rest near a link, and — on phones, where there is no hover — scrolling coming to a stop with a link in the middle of the screen. Predictions are capped at four pages per visit, so this never turns into bulk downloading."), React.createElement("p", null, "No JavaScript scans your links, and nothing is downloaded up front. A page with 30 links costs what a page with 10 links costs."), React.createElement("p", null, React.createElement("strong", null, "Prerender"), " goes further: the browser builds the entire page in the background, so the click is instant rather than merely fast. It is much more expensive — a full page load, including scripts and images — so it is off by default and only worth turning on if you have measured that it helps your site."), React.createElement("p", null, React.createElement("strong", null, "Eagerness"), " decides how early the cheap prefetch starts:"), React.createElement("ul", { style: { margin: '6px 0', paddingLeft: '20px', fontSize: '13px' } }, React.createElement("li", null, React.createElement("strong", null, "Conservative"), " — only when the mouse button goes down, just before the click. Predictions are switched off."), React.createElement("li", null, React.createElement("strong", null, "Moderate"), " — after a short hover or on keyboard focus, plus predictions (recommended)"), React.createElement("li", null, React.createElement("strong", null, "Eager"), " — as soon as the browser sees the link (uses more bandwidth)")), React.createElement("p", null, "Links in your footer are always treated as low-intent and stay on pointer-down, whichever setting you pick. Cart, checkout, account, feed, admin, download and query-string URLs are never speculated, and neither are links you exclude below."), React.createElement("p", null, "While this is on, Easy Optimizer replaces WordPress's own built-in speculative loading so a page never carries two competing rule sets. Turn it off and WordPress goes back to handling it.")), React.createElement("label", { style: { display: 'inline-flex', alignItems: 'center', gap: '8px', marginTop: '6px' } }, React.createElement("input", { type: "checkbox", id: "easyopt_instant_preload", name: "easyopt_instant_preload", value: "1", checked: on, onChange: () => onChange('easyopt_instant_preload', on ? '0' : '1') }), React.createElement("strong", null, "Enable Page Prefetching")), React.createElement("div", { className: "instantfield", style: !on ? { display: 'none' } : { marginTop: '18px' } }, React.createElement(PopupGrid, { entries: [
-            { name: 'easyopt_instant_preload_exclude_urls', title: 'Exclude URLs', help: 'URLs to never prefetch. One per line. A line without * matches anywhere in the URL; * is a wildcard.', placeholder: "/cart\nprivate/*\nref=" },
-            { name: 'easyopt_instant_preload_exclude_selectors', title: 'Exclude CSS Selectors', help: 'CSS selectors for links to skip. One per line.', placeholder: "a.no-prefetch\n[data-no-prefetch]" },
-        ], cols: 2, settings: settings, onChange: onChange }), React.createElement(Check, { name: "easyopt_instant_prerender", label: "Prerender (Prefetch the full page in advance)", bold: true, settings: settings, onChange: onChange, desc: "Off by default — builds the whole page in the background, which costs memory and CPU. Chromium only; Safari and Firefox keep plain prefetching." }), React.createElement(SelectField, { name: "easyopt_instant_eagerness", label: "Eagerness", settings: settings, onChange: onChange, options: [
-            { value: 'conservative', label: 'Conservative — pointer down only, no predictions' },
+    return (React.createElement(CardPage, { id: "navigation" }, React.createElement(MasterCard, { name: "easyopt_instant_preload", title: "Enable Page Prefetching", settings: settings, onChange: onChange, always: React.createElement(Collapsible, { title: "How does page prefetching work?" }, React.createElement("p", null, "Easy Optimizer writes a small set of ", React.createElement("strong", null, "speculation rules"), " into the top of every page. The browser reads them as the page loads, then decides when to start loading a link the visitor might click — and how many pages this device and connection can handle."), React.createElement("p", null, "Easy Optimizer also makes its own predictions. Once the page is idle, it starts loading the page you link to most (in your header, main button and footer). It also reacts to a “Next page” link, an opened dropdown or mobile menu, the pointer resting near a link, and, on phones, scrolling stopping with a link mid-screen. Predictions are capped at four pages per visit, so it never bulk-downloads."), React.createElement("p", null, "Predictions are capped at four pages, so a page with 30 links costs the same as one with 10."), React.createElement("p", null, React.createElement("strong", null, "Prerender"), " goes further: the browser builds the whole next page in the background, so the click is instant. It's much heavier — a full page load with scripts and images — so it's off by default. Turn it on only if testing shows it helps."), React.createElement("p", null, React.createElement("strong", null, "Eagerness"), " decides how early the light prefetch starts:"), React.createElement("ul", { style: { margin: '6px 0', paddingLeft: '20px', fontSize: '13px' } }, React.createElement("li", null, React.createElement("strong", null, "Conservative"), " — only when a link is pressed, just before the click. Predictions are off."), React.createElement("li", null, React.createElement("strong", null, "Moderate"), " — after a short hover or on keyboard focus, plus predictions (recommended)"), React.createElement("li", null, React.createElement("strong", null, "Eager"), " — as soon as the browser finds the link (uses more data)")), React.createElement("p", null, "Footer links only load when pressed, whatever you pick. Cart, checkout, account, feed, admin, download and query-string links are never prefetched, and neither are links you exclude below."), React.createElement("p", null, "While this is on, Easy Optimizer replaces WordPress's built-in speculative loading, so the two never clash. Turn it off and WordPress handles it again."))
+    }, React.createElement(SelectField, { name: "easyopt_instant_eagerness", label: "Eagerness", settings: settings, onChange: onChange, options: [
+            { value: 'conservative', label: 'Conservative — on press only, no predictions' },
             { value: 'moderate', label: 'Moderate — short hover, focus and predictions (recommended)' },
-            { value: 'eager', label: 'Eager — as soon as a link is seen (more bandwidth)' },
-        ] }))));
+            { value: 'eager', label: 'Eager — as soon as a link is found (more data)' },
+        ] }), React.createElement(Check, { name: "easyopt_instant_prerender", label: "Prerender (build the full page in advance)", bold: true, settings: settings, onChange: onChange, desc: "Off by default — builds the whole page in the background, using more memory and CPU. Chrome and Edge only; Safari and Firefox keep normal prefetch." }), React.createElement(PopupGrid, { entries: [
+            { name: 'easyopt_instant_preload_exclude_urls', title: 'Exclude URLs', help: 'URLs never to prefetch, one per line. A line matches anywhere in the URL; * matches any text.', placeholder: "/cart\nprivate/*\nref=" },
+            { name: 'easyopt_instant_preload_exclude_selectors', title: 'Exclude CSS Selectors', help: 'CSS selectors for links to skip. One per line.', placeholder: "a.no-prefetch\n[data-no-prefetch]" },
+        ], cols: 2, settings: settings, onChange: onChange }))));
 }
 // ═══════════════════════════════════════════════════
-//  OPTIMIZATION PANEL — wrapper with sub-tabs
-// ═══════════════════════════════════════════════════
-function OptimizationPanel({ settings, onChange }) {
-    const [sub, setSub] = useState(() => {
-        const stored = localStorage.getItem('easyopt_opt_sub');
-        return OPT_SUBTABS.find(t => t.key === stored) ? stored : 'js';
-    });
-    const switchSub = (k) => { setSub(k); localStorage.setItem('easyopt_opt_sub', k); };
-    return (React.createElement("div", { style: { display: "block" }, className: "eop-panel", id: "eop-panel-optimization" }, React.createElement(SubTabNav, { tabs: OPT_SUBTABS, active: sub, onChange: switchSub }), React.createElement("div", { style: { marginTop: '20px' } }, sub === 'js' && React.createElement(JsSubPanel, { settings: settings, onChange: onChange }), sub === 'css' && React.createElement(CssSubPanel, { settings: settings, onChange: onChange }), sub === 'lazy' && React.createElement(LazySubPanel, { settings: settings, onChange: onChange }), sub === 'lcp' && React.createElement(LcpSubPanel, { settings: settings, onChange: onChange }), sub === 'prefetch' && React.createElement(PrefetchSubPanel, { settings: settings, onChange: onChange }))));
-}
-// ═══════════════════════════════════════════════════
-//  FONTS PANEL — with dependency check
+//  MEDIA — FONTS tab, with dependency check
 // ═══════════════════════════════════════════════════
 function FontsPanel({ settings, onChange, switchTab }) {
-    const fs = Number(settings.easyopt_font_display_swap) === 1;
     const lf = Number(settings.easyopt_lazyload_fonts) === 1;
     const unusedCssOn = Number(settings.easyopt_unused_css) === 1;
-    return (React.createElement("div", { style: { display: "block" }, className: "eop-panel", id: "eop-panel-fonts" }, React.createElement("h2", null, "Font Optimization"), React.createElement("label", null, React.createElement("input", { type: "checkbox", name: "easyopt_font_display_swap", value: "1", checked: fs, onChange: () => onChange('easyopt_font_display_swap', fs ? '0' : '1') }), " ", React.createElement("strong", null, "Force Font Display Swap")), React.createElement("p", { className: "description" }, "Adds font-display: swap to all @font-face declarations. Prevents invisible text while fonts load."), React.createElement(Collapsible, { title: "What is font-display: swap?" }, React.createElement("p", null, "When a web font hasn't loaded yet, browsers can either show invisible text (FOIT — Flash of Invisible Text) or show a fallback system font (FOUT — Flash of Unstyled Text). The ", React.createElement("code", null, "font-display: swap"), " rule tells the browser to immediately show text in a fallback font, then swap to the web font once it's ready. Google Lighthouse specifically recommends this for better perceived performance.")), React.createElement("div", { style: { marginTop: '14px' } }, React.createElement(Check, { name: "easyopt_preload_fonts", label: "Smart Preload Fonts", bold: true, settings: settings, onChange: onChange, disabled: !unusedCssOn, desc: "Detects the above-the-fold fonts each page actually uses (via a one-time visitor beacon)." }), React.createElement(Check, { name: "easyopt_lazyload_fonts", label: "Smart Lazyload Fonts", bold: true, settings: settings, onChange: onChange, disabled: !unusedCssOn, desc: "Defers below-the-fold fonts; keeps only above-the-fold ones in critical CSS." }), !unusedCssOn && (React.createElement(DepWarning, { message: "Smart Preload Fonts and Smart Lazyload Fonts both build on the used-CSS engine, so they require Remove Unused CSS to be enabled. Turn it on to use these options.", linkLabel: "Go to CSS settings \u2192", onLink: () => switchTab('optimization') }))), React.createElement(EopClearButton, {
+    return (React.createElement(CardPage, { id: "fonts" }, React.createElement(MasterCard, { name: "easyopt_font_display_swap", title: "Force Font Display Swap", desc: "Shows text right away in a backup font while your web fonts load (adds font-display: swap).", settings: settings, onChange: onChange, always: React.createElement(Collapsible, { title: "What is font-display: swap?" }, React.createElement("p", null, "While a web font is loading, browsers either hide the text or show a backup system font. The ", React.createElement("code", null, "font-display: swap"), " rule tells the browser to show text right away in a backup font, then switch to your font when it's ready. Google PageSpeed recommends it."))
+    }), React.createElement(Card, { title: "Smart fonts" }, React.createElement(Check, { name: "easyopt_preload_fonts", label: "Smart Preload Fonts", bold: true, settings: settings, onChange: onChange, disabled: !unusedCssOn, desc: "Finds the fonts used at the top of each page and loads them first (learned from one visit)." }), React.createElement(Check, { name: "easyopt_lazyload_fonts", label: "Smart Lazy Load Fonts", bold: true, settings: settings, onChange: onChange, disabled: !unusedCssOn, desc: "Loads fonts lower on the page later; only top-of-page fonts stay in used CSS." }), !unusedCssOn && (React.createElement(DepWarning, { message: "Smart Preload Fonts and Smart Lazy Load Fonts work through Remove Unused CSS, so turn that on first to use them.", linkLabel: "Go to CSS settings →", onLink: () => switchTab('cssjs', 'css') })), unusedCssOn && (React.createElement("p", { className: "description", style: { marginTop: '6px' } }, React.createElement("strong", null, "Note:"), " these two work through Remove Unused CSS. On pages it skips (excluded URLs, post types it doesn't cover) or hasn't processed yet, fonts load as normal.")), lf && unusedCssOn && React.createElement(PopupGrid, { entries: [
+            { name: 'easyopt_fonts_exclude', title: 'Exclude Fonts', help: 'Font names or URLs to always keep in used CSS (one per line).', placeholder: "font-awesome\nicons" },
+            { name: 'easyopt_fonts_exclude_urls', title: 'Exclude URLs', help: 'URLs (or parts) where font optimization doesn\'t run.', placeholder: "/my-custom-page/\n/landing/" },
+        ], cols: 2, settings: settings, onChange: onChange }), React.createElement(EopClearButton, {
         label: "Clear fonts data",
         path: "/fonts/clear",
         busyLabel: "Clearing…",
-        doneLabel: "Fonts data cleared \u2713",
+        doneLabel: "Fonts data cleared ✓",
         confirm: "Clear the collected above-the-fold fonts for every page type? They will be re-collected on the next visits."
-    }), React.createElement("div", { style: !lf ? { display: 'none' } : {} }, React.createElement(PopupGrid, { entries: [
-            { name: 'easyopt_fonts_exclude', title: 'Exclude Fonts', help: 'Font families or URLs to keep in Used CSS (one per line).', placeholder: "font-awesome\nicons" },
-            { name: 'easyopt_fonts_exclude_urls', title: 'Exclude URLs', help: 'Pages where font optimization should not run.', placeholder: "/my-custom-page/\n/landing/" },
-        ], cols: 2, settings: settings, onChange: onChange }))));
+    }))));
 }
 // ═══════════════════════════════════════════════════
 //  IMAGE CDN PANEL
@@ -998,7 +1127,7 @@ function SmartImagesPanel({ settings, onChange, applyServerSettings }) {
         }
         catch (err) { /* private mode */ }
     };
-    return React.createElement("div", { style: { display: "block" }, className: "eop-panel", id: "eop-panel-imgopt" }, React.createElement("h2", null, "Image Optimization"), React.createElement("p", { className: "description", style: { marginTop: 0 } }, "Optimize every image on your site. Choose where the work happens \u2014 everything else stays the same."), React.createElement("div", { className: "eop-seg", role: "tablist", style: { margin: '16px 0 22px' } }, React.createElement("button", { type: "button", role: "tab", className: "eop-seg__btn " + (engine === 'server' ? 'is-on' : ''),
+    return React.createElement("div", { style: { display: "block" }, className: "eop-panel", id: "eop-panel-imgopt" }, React.createElement("h2", null, "Image Optimization"), React.createElement("p", { className: "description", style: { marginTop: 0 } }, "Optimize every image on your site. Choose where it happens: on this server, or with Smart Images."), React.createElement("div", { className: "eop-seg", role: "tablist", style: { margin: '16px 0 22px' } }, React.createElement("button", { type: "button", role: "tab", className: "eop-seg__btn " + (engine === 'server' ? 'is-on' : ''),
         "aria-selected": engine === 'server' ? 'true' : 'false', onClick: () => pick('server') }, React.createElement(Icon, { id: 'gauge', cls: "eop-icon eop-icon--xs" }), React.createElement("span", null, "This server"), React.createElement("span", { className: "eop-seg__tag" }, "Free")), React.createElement("button", { type: "button", role: "tab", className: "eop-seg__btn " + (engine === 'cloud' ? 'is-on' : ''),
         "aria-selected": engine === 'cloud' ? 'true' : 'false', onClick: () => pick('cloud') }, React.createElement(Icon, { id: 'cloud', cls: "eop-icon eop-icon--xs" }), React.createElement("span", null, "Smart Images"), React.createElement("span", { className: "eop-seg__tag" }, "Pro"))), engine === 'server'
         ? React.createElement(LocalImageEngine, { settings: settings, onChange: onChange })
@@ -1071,8 +1200,8 @@ function LocalImageEngine({ settings, onChange }) {
     const restoringOnly = running && pending === 0 && restoring > 0;
     // floor, not round: 201 of 202 must not read 100%.
     const pct = total > 0 ? Math.floor(processed / total * 100) : 0;
-    return React.createElement("div", null, stats && React.createElement("div", { className: "eop-callout", style: noFormats ? { borderLeft: '3px solid var(--eop-warn, #dba617)', marginBottom: '16px' } : { marginBottom: '16px' } }, React.createElement("p", { style: { margin: 0, fontSize: '13px' } }, React.createElement("strong", null, noFormats ? 'Limited on this host: ' : 'This host supports: '), stats.capability)), React.createElement(Check, { name: "easyopt_images", label: "Optimize images on this server", bold: true, settings: settings, onChange: onChange, disabled: noFormats,
-        desc: noFormats ? "Nothing to enable until this host can encode WebP or AVIF." : "AVIF and WebP copies are made next to your originals, which are never modified." }), on && stats && React.createElement("div", { className: "eop-imgstat", style: { marginTop: '18px' } }, 
+    return React.createElement("div", null, stats && React.createElement("div", { className: "eop-callout", style: noFormats ? { borderLeft: '3px solid var(--eop-warn, #dba617)', marginBottom: '16px' } : { marginBottom: '16px' } }, React.createElement("p", { style: { margin: 0, fontSize: '13px' } }, React.createElement("strong", null, noFormats ? 'Limited on this server: ' : 'This server supports: '), stats.capability)), React.createElement(Check, { name: "easyopt_images", label: "Optimize images on this server", bold: true, settings: settings, onChange: onChange, disabled: noFormats,
+        desc: noFormats ? "This server can't create WebP or AVIF yet. Ask your host to enable it." : "Copies are made next to your originals; only “Also shrink” below changes them." }), on && stats && React.createElement("div", { className: "eop-imgstat", style: { marginTop: '18px' } }, 
     // Live headline. During a run it reads "Optimizing N of M"; at
     // rest it reads how many are done and what was saved.
     React.createElement("div", { className: "eop-imgstat__head" }, React.createElement("div", null, restoringOnly
@@ -1083,17 +1212,17 @@ function LocalImageEngine({ settings, onChange }) {
     // Drops the queue; the image being encoded finishes, finished
     // images stay optimized, and "Optimize N remaining" resumes.
     running && React.createElement("button", { type: "button", className: "button", style: { marginLeft: '8px' }, disabled: !!busy, onClick: () => act('/images/stop', 'stop') }, busy === 'stop' ? 'Stopping\u2026' : 'Stop'), React.createElement("button", { type: "button", className: "button", style: { marginLeft: '8px' }, disabled: !!busy || running || done === 0,
-        onClick: () => { if (window.confirm('Delete every optimized copy and restore your originals? Your originals were never modified, so nothing is lost.')) {
+        onClick: () => { if (window.confirm('Delete every optimized copy and restore your originals? Shrunk originals come back from their backup, so nothing is lost.')) {
             act('/images/restore', 'restore');
-        } } }, busy === 'restore' ? 'Queueing\u2026' : 'Restore all'), !running && React.createElement("button", { type: "button", className: "button", style: { marginLeft: '8px' }, onClick: () => load() }, "Refresh")), React.createElement("p", { className: "description", style: { margin: '8px 0 0' } }, running ? "Live \u2014 this updates on its own. You can leave the page; it keeps going." : "Runs in the background. You can leave this page.")), on && React.createElement("div", { style: { marginTop: '20px' } }, React.createElement(Check, { name: "easyopt_images_auto", label: "Optimize new uploads automatically", settings: settings, onChange: onChange, desc: "Queues each image as it is uploaded." }), React.createElement(Check, { name: "easyopt_images_avif", label: "Generate AVIF", settings: settings, onChange: onChange, disabled: !canAvif, desc: canAvif ? "Smallest files. Supported by every current browser." : "Unavailable \u2014 this host's image library was built without AVIF support." }), React.createElement(Check, { name: "easyopt_images_webp", label: "Generate WebP", settings: settings, onChange: onChange, disabled: !canWebp, desc: canWebp ? "Broader support on older browsers." : "Unavailable on this host." }), React.createElement(Check, { name: "easyopt_images_picture", label: "Serve optimized images", settings: settings, onChange: onChange, desc: "Wraps images in a <picture> element so each browser picks the best format. Off keeps generating copies without serving them." }), React.createElement("div", { style: { marginTop: '18px' } }, canAvif && React.createElement(SelectField, { name: "easyopt_images_quality_avif", label: "AVIF quality", settings: settings, onChange: onChange, options: qualityOpts(40, 75) }), canWebp && React.createElement(SelectField, { name: "easyopt_images_quality_webp", label: "WebP quality", settings: settings, onChange: onChange, options: qualityOpts(60, 90) })), React.createElement(Collapsible, { title: "Advanced" }, React.createElement(SelectField, { name: "easyopt_images_max_dimension", label: "Maximum image dimension", settings: settings, onChange: onChange, options: [
+        } } }, busy === 'restore' ? 'Queueing\u2026' : 'Restore all'), !running && React.createElement("button", { type: "button", className: "button", style: { marginLeft: '8px' }, onClick: () => load() }, "Refresh")), React.createElement("p", { className: "description", style: { margin: '8px 0 0' } }, running ? "Live \u2014 this updates on its own. You can leave the page; it keeps going." : "Runs in the background. You can leave this page.")), on && React.createElement("div", { style: { marginTop: '20px' } }, React.createElement(Check, { name: "easyopt_images_auto", label: "Optimize new uploads automatically", settings: settings, onChange: onChange, desc: "Optimizes each image when you upload it." }), React.createElement(Check, { name: "easyopt_images_avif", label: "Generate AVIF", settings: settings, onChange: onChange, disabled: !canAvif, desc: canAvif ? "Smallest files. Supported by every current browser." : "Unavailable — this server's image software can't create AVIF." }), React.createElement(Check, { name: "easyopt_images_webp", label: "Generate WebP", settings: settings, onChange: onChange, disabled: !canWebp, desc: canWebp ? "Broader support on older browsers." : "Unavailable on this server." }), React.createElement(Check, { name: "easyopt_images_picture", label: "Serve optimized images", settings: settings, onChange: onChange, desc: "Shows visitors the AVIF or WebP copy their browser supports. When off, copies are still made but not shown." }), React.createElement("div", { style: { marginTop: '18px' } }, canAvif && React.createElement(SelectField, { name: "easyopt_images_quality_avif", label: "AVIF quality", settings: settings, onChange: onChange, options: qualityOpts(40, 75) }), canWebp && React.createElement(SelectField, { name: "easyopt_images_quality_webp", label: "WebP quality", settings: settings, onChange: onChange, options: qualityOpts(60, 90) })), React.createElement(Collapsible, { title: "Advanced" }, React.createElement(SelectField, { name: "easyopt_images_max_dimension", label: "Maximum image dimension", settings: settings, onChange: onChange, options: [
             { value: '0', label: "Don't resize (recommended)" },
-            { value: '2560', label: '2560px \u2014 full-width hero images' },
+            { value: '2560', label: '2560px — full-width banner images' },
             { value: '1920', label: '1920px \u2014 standard desktop width' },
             { value: '1280', label: '1280px \u2014 smaller sites' },
         ] }), React.createElement(Check, { name: "easyopt_images_resize_originals", label: "Also shrink existing oversized originals", settings: settings, onChange: onChange, desc: "\u26a0 The only setting that modifies your uploaded files. A backup is saved first; Restore all puts every original back." }), React.createElement(SelectField, { name: "easyopt_images_core_format", label: "Ask WordPress to save uploads as", settings: settings, onChange: onChange, options: [
             { value: '', label: 'Leave WordPress alone (recommended)' },
             { value: 'webp', label: 'WebP' },
-        ] }), React.createElement("p", { className: "description" }, "WordPress 7.1+ can convert uploads in the browser. This tells it which format \u2014 new uploads only, on supporting browsers; everything else is handled here."))));
+        ] }), React.createElement("p", { className: "description" }, "WordPress 7.1+ can convert new uploads in the browser before they're sent. This picks the format. Only new uploads are affected."))));
 }
 // (2.7.0) FLUXPRESS SERVICE BAR
 // Variant J: cloud is not a place you visit, it is an account state that is
@@ -1146,18 +1275,13 @@ function openFreemiusCheckout(opts) {
         name: 'Easy Optimizer Cloud',
         trial: 'free',
         user_email: (opts.email || '').trim(),
-        purchaseCompleted: () => { if (opts.onComplete) {
-            opts.onComplete();
+        purchaseCompleted: (r) => { if (opts.onComplete) {
+            opts.onComplete(r);
         } },
     });
 }
-function ServiceBar({ switchTab }) {
-    const [d, setD] = React.useState(null);
-    const [checked, setChecked] = React.useState(false);
-    React.useEffect(() => {
-        api.get('/cloud/usage').then((r) => { setD(r || {}); setChecked(true); });
-    }, []);
-    if (!checked) {
+function ServiceBar({ switchTab, d }) {
+    if (!d) {
         return null;
     }
     const connected = !!(d && d.connected);
@@ -1170,6 +1294,11 @@ function ServiceBar({ switchTab }) {
         inactive
             ? (u.reason === 'trial_expired' ? "Trial ended \u00b7 upgrade to switch it back on" : "Paused \u00b7 serving from your own server")
             : (onCloudTrial(d) ? "Trial \u00b7 serving from the edge" : "Active \u00b7 serving from the edge")), React.createElement("span", { style: { flex: 1 } }), React.createElement("button", { type: "button", className: "eop-cloudbar__btn eop-cloudbar__btn--ghost", onClick: () => switchTab('flux') }, "Manage"));
+    }
+    // (2.7.6) Trial started from the panel, key not pasted yet. The edge is
+    // still off, so ask for the key rather than pitch a trial they already have.
+    if (d && d.trial_pending) {
+        return React.createElement("div", { className: "eop-cloudbar" }, React.createElement("span", { className: "eop-cloudbar__spark" }, "⚡"), React.createElement("span", { className: "eop-cloudbar__title" }, "Cloud Optimization"), React.createElement("span", { className: "eop-cloudbar__pitch" }, "Trial started — paste your license key to switch it on"), React.createElement("span", { style: { flex: 1 } }), React.createElement("button", { type: "button", className: "eop-cloudbar__btn eop-cloudbar__btn--solid", onClick: () => switchTab('flux') }, "Paste key"));
     }
     return React.createElement("div", { className: "eop-cloudbar" }, React.createElement("span", { className: "eop-cloudbar__spark" }, "\u26a1"), React.createElement("span", { className: "eop-cloudbar__title" }, "Cloud Optimization"), React.createElement("span", { className: "eop-cloudbar__pitch" }, "Guaranteed 90+ PageSpeed scores"), React.createElement("span", { style: { flex: 1 } }), React.createElement("button", { type: "button", className: "eop-cloudbar__btn eop-cloudbar__btn--ghost", onClick: () => switchTab('flux') }, "Learn more"), React.createElement("button", { type: "button", className: "eop-cloudbar__btn eop-cloudbar__btn--solid", onClick: () => switchTab('flux') }, "Try Free Now"));
 }
@@ -1200,6 +1329,22 @@ function FluxPressPanel({ settings, onChange, switchTab, showToast }) {
     const trial = connected && onCloudTrial(d);
     const trialOver = u.reason === 'trial_expired';
     const daysLeft = Number(u.trial_days_left || 0);
+    // (2.7.6) A trial started here whose key has not been pasted yet.
+    const pending = !connected && d.trial_pending ? d.trial_pending : null;
+    // (2.7.6) Remember the trial on the server so the ask for the key survives
+    // a reload or a closed tab, then switch to it. The address comes from the
+    // checkout response; the overlay never returns the key itself.
+    const trialStarted = (r) => {
+        const email = (r && r.user && r.user.email) || '';
+        api.post('/cloud/trial-started', { email: email }).then((res) => {
+            if (res && res.success) {
+                setD(Object.assign({}, d, { trial_pending: res.trial_pending }));
+                window.dispatchEvent(new Event('easyopt-cloud-changed'));
+                return;
+            }
+            say('Trial started 🎉 Check your email for your license key, then paste it below.', 'ok');
+        });
+    };
     const doConnect = () => {
         const k = (keyVal || '').trim();
         if (!k) {
@@ -1245,6 +1390,15 @@ function FluxPressPanel({ settings, onChange, switchTab, showToast }) {
     const noteEl = note.text
         ? React.createElement("p", { className: "eop-cloudnote", role: note.kind === 'error' ? 'alert' : 'status', style: { margin: '8px 0 0', fontSize: '13px', color: noteColor(note.kind), fontWeight: note.kind === 'info' ? 400 : 600 } }, note.text)
         : null;
+    const keyRow = (focus) => React.createElement("div", { className: "eop-keybox__row" }, React.createElement("input", { type: "text", value: keyVal, placeholder: "Paste your license key (starts with sk_)", disabled: busy, autoFocus: !!focus,
+        onChange: (e) => setKeyVal(e.target.value),
+        // (2.7.4) preventDefault: this box sits inside the settings <form>, so
+        // Enter also submitted it and reloaded the page, wiping the message.
+        onKeyDown: (e) => { if (e.key === 'Enter') {
+            e.preventDefault();
+            doConnect();
+        } },
+        className: "eop-keybox__input" }), React.createElement("button", { type: "button", className: "eop-btn eop-btn--solid", disabled: busy, onClick: doConnect }, busy ? "Connecting…" : "Connect"));
     // Every feature is locked until an account is connected; connecting
     // unlocks the toggle. 'cloud' flips an edge-delivery setting, 'local' an
     // on-server optimization, 'soon' is context only, 'outcome' is an X/check.
@@ -1262,7 +1416,7 @@ function FluxPressPanel({ settings, onChange, switchTab, showToast }) {
             else {
                 onChange('easyopt_delay_js', '0');
             } },
-            local: 'Delay & defer on interaction', cloud: 'Delay Js with faster executions' },
+            local: 'Delay & defer on interaction', cloud: 'Delay & defer, scripts from the edge' },
         { name: 'Unused CSS', kind: 'local',
             on: Number(settings.easyopt_unused_css) === 1,
             set: (v) => { if (v) {
@@ -1274,11 +1428,11 @@ function FluxPressPanel({ settings, onChange, switchTab, showToast }) {
                 onChange('easyopt_unused_css', '0');
                 onChange('easyopt_cloud_unused_css', '0');
             } },
-            local: 'Beacon heuristic', cloud: 'Headless render, cross-site learning' },
+            local: 'Beacon heuristic', cloud: 'Used CSS, stylesheets from the edge' },
         { name: 'Font optimization', kind: 'local',
             on: Number(settings.easyopt_lazyload_fonts) === 1,
             set: (v) => onChange('easyopt_lazyload_fonts', v ? '1' : '0'),
-            local: 'Preload + swap', cloud: 'Subset + edge-served' },
+            local: 'Preload + swap', cloud: 'Preload + swap, fonts from the edge' },
         { name: 'HTML pages', kind: 'soon', local: 'Local page cache', cloud: 'Full-page edge cache' },
         { name: '90+ scores, mobile & desktop', kind: 'outcome' },
         { name: 'Priority Support', kind: 'outcome' },
@@ -1293,7 +1447,10 @@ function FluxPressPanel({ settings, onChange, switchTab, showToast }) {
             : u.reason === 'quota'
                 ? "You've used this month's allowance. Cloud delivery resumes when the month resets; your site works normally meanwhile."
                 : "Your plan is not active. Everything is running on your own server, free.") : null, noteEl), React.createElement("div", { style: { display: 'flex', gap: '8px', flexShrink: 0 } }, trial ? React.createElement("button", { type: "button", className: "eop-btn eop-btn--solid", disabled: busy, onClick: upgrade }, "Upgrade") : null, React.createElement("button", { type: "button", className: "eop-btn eop-btn--ghost", disabled: busy, onClick: disconnect }, "Disconnect")))
-        : React.createElement("div", { className: "eop-cloudpitch" }, React.createElement("div", { className: "eop-cloudhero eop-cloudhero--pitch" }, React.createElement("div", { className: "eop-gauge" }, React.createElement("svg", { viewBox: "0 0 132 132", width: "116", height: "116", "aria-hidden": "true" }, React.createElement("circle", { cx: 66, cy: 66, r: 58, fill: "none", stroke: "var(--eop-brand-soft)", strokeWidth: 12 }), React.createElement("circle", { cx: 66, cy: 66, r: 58, fill: "none", stroke: "var(--eop-brand)", strokeWidth: 12, strokeLinecap: "round", strokeDasharray: "364.4", strokeDashoffset: "14.6", transform: "rotate(-90 66 66)" })), React.createElement("div", { className: "eop-gauge__val" }, React.createElement("b", null, "96"), React.createElement("small", null, "Mobile"))), React.createElement("div", { className: "eop-cloudhero__pitchbody" }, React.createElement("h3", { className: "eop-cloudhero__hd eop-cloudhero__hd--lg" }, "Guaranteed 90+ PageSpeed \u2014 or you don't pay."), React.createElement("p", { className: "description", style: { margin: '8px 0 0', maxWidth: '46ch' } }, "Move images, CSS, JS and fonts onto our edge. We tune it until Google scores you 90+ on mobile and desktop."), React.createElement("div", { className: "eop-cloudhero__cta" }, React.createElement("button", { type: "button", className: "eop-btn eop-btn--solid eop-btn--lg", onClick: () => openFreemiusCheckout({ onComplete: () => say('Trial started \ud83c\udf89 Check your email for your license key, then paste it below.', 'ok') }) }, "Start 14-day free trial"), React.createElement("span", { className: "eop-cloudhero__trust" }, "No card \u00b7 Cancel anytime")))), React.createElement("div", { className: "eop-cloudstats" }, React.createElement("div", null, React.createElement("b", null, "119"), React.createElement("span", null, "edge locations")), React.createElement("div", null, React.createElement("b", null, "79%"), React.createElement("span", null, "smaller images")), React.createElement("div", null, React.createElement("b", null, "AVIF"), React.createElement("span", null, "per-browser")), React.createElement("div", null, React.createElement("b", null, "0"), React.createElement("span", null, "server load"))));
+        : pending
+            // (2.7.6) The key is the only step left, so it leads the tab.
+            ? React.createElement("div", { className: "eop-cloudpitch" }, React.createElement("div", { className: "eop-cloudhero eop-cloudhero--pitch" }, React.createElement("div", { className: "eop-cloudhero__pitchbody" }, React.createElement("h3", { className: "eop-cloudhero__hd eop-cloudhero__hd--lg" }, "Your trial is ready — one step left"), React.createElement("p", { className: "description", style: { margin: '8px 0 14px', maxWidth: '62ch' } }, "We emailed your license key to ", pending.email ? React.createElement("strong", null, pending.email) : "the address you used at checkout", ". It comes from Freemius, so check spam if it isn't there. Paste it below and Cloud switches on in under a minute."), keyRow(true), noteEl, React.createElement("p", { className: "description", style: { margin: '10px 0 0' } }, "Can't find the email? ", React.createElement("a", { href: (CFG() && CFG().recoverUrl) || 'https://customers.freemius.com/store/14517/password/recover', target: "_blank", rel: "noopener" }, "Get your key from your account"), "."))))
+            : React.createElement("div", { className: "eop-cloudpitch" }, React.createElement("div", { className: "eop-cloudhero eop-cloudhero--pitch" }, React.createElement("div", { className: "eop-gauge" }, React.createElement("svg", { viewBox: "0 0 132 132", width: "116", height: "116", "aria-hidden": "true" }, React.createElement("circle", { cx: 66, cy: 66, r: 58, fill: "none", stroke: "var(--eop-brand-soft)", strokeWidth: 12 }), React.createElement("circle", { cx: 66, cy: 66, r: 58, fill: "none", stroke: "var(--eop-brand)", strokeWidth: 12, strokeLinecap: "round", strokeDasharray: "364.4", strokeDashoffset: "14.6", transform: "rotate(-90 66 66)" })), React.createElement("div", { className: "eop-gauge__val" }, React.createElement("b", null, "96"), React.createElement("small", null, "Mobile"))), React.createElement("div", { className: "eop-cloudhero__pitchbody" }, React.createElement("h3", { className: "eop-cloudhero__hd eop-cloudhero__hd--lg" }, "Guaranteed 90+ PageSpeed \u2014 or you don't pay."), React.createElement("p", { className: "description", style: { margin: '8px 0 0', maxWidth: '46ch' } }, "Move images, CSS, JS and fonts onto our edge. We tune it until Google scores you 90+ on mobile and desktop."), React.createElement("div", { className: "eop-cloudhero__cta" }, React.createElement("button", { type: "button", className: "eop-btn eop-btn--solid eop-btn--lg", onClick: () => openFreemiusCheckout({ onComplete: trialStarted }) }, "Try It Free"), React.createElement("span", { className: "eop-cloudhero__trust" }, "14 days free \u00b7 No card \u00b7 Cancel anytime")))), React.createElement("div", { className: "eop-cloudstats" }, React.createElement("div", null, React.createElement("b", null, "119"), React.createElement("span", null, "edge locations")), React.createElement("div", null, React.createElement("b", null, "79%"), React.createElement("span", null, "smaller images")), React.createElement("div", null, React.createElement("b", null, "AVIF"), React.createElement("span", null, "per-browser")), React.createElement("div", null, React.createElement("b", null, "0"), React.createElement("span", null, "server load"))));
     return React.createElement("div", { style: { display: "block" }, className: "eop-panel", id: "eop-panel-flux" }, React.createElement("h2", null, "Cloud Optimization"), React.createElement("p", { className: "description", style: { marginTop: 0 } }, "One account upgrades features you already have. Anything left off keeps running on your own server, free."), band, React.createElement("table", { className: "eop-flux-tbl", style: { marginTop: '20px' } }, React.createElement("tbody", null, React.createElement("tr", null, React.createElement("th", null, "Feature"), React.createElement("th", null, "On your server"), React.createElement("th", null, "With Cloud"), React.createElement("th", { style: { textAlign: 'right' } }, connected ? "Cloud" : "")), rows.map((r) => React.createElement("tr", { key: r.name, className: r.kind === 'soon' ? 'is-soon' : '' }, React.createElement("td", { className: "eop-flux-tbl__name" }, React.createElement("strong", null, r.name)), r.kind === 'outcome'
         ? React.createElement("td", null, React.createElement("span", { className: "eop-flux-x" }, "\u2715"))
         : React.createElement("td", { className: "eop-flux-tbl__sub" }, r.local), r.kind === 'outcome'
@@ -1312,15 +1469,7 @@ function FluxPressPanel({ settings, onChange, switchTab, showToast }) {
                 }
                 else {
                     r.set(!r.on);
-                } } }), React.createElement("span", { className: "eop-flux-sw__track" }, React.createElement("span", { className: "eop-flux-sw__knob" })), !live ? React.createElement("span", { className: "eop-flux-sw__lock" }, "\ud83d\udd12") : null)))))), React.createElement("p", { className: "description", style: { marginTop: '10px' } }, "Edge delivery unlocks when you connect an account. Guaranteed best possible result."), !connected ? React.createElement("div", { className: "eop-keybox" }, React.createElement("div", { className: "eop-keybox__label" }, "Already started a trial or bought a plan?"), React.createElement("div", { className: "eop-keybox__row" }, React.createElement("input", { type: "text", value: keyVal, placeholder: "Paste your license key (starts with sk_)", disabled: busy,
-        onChange: (e) => setKeyVal(e.target.value),
-        // (2.7.4) preventDefault: this box sits inside the settings <form>, so
-        // Enter also submitted it and reloaded the page, wiping the message.
-        onKeyDown: (e) => { if (e.key === 'Enter') {
-            e.preventDefault();
-            doConnect();
-        } },
-        className: "eop-keybox__input" }), React.createElement("button", { type: "button", className: "eop-btn eop-btn--solid", disabled: busy, onClick: doConnect }, busy ? "Connecting\u2026" : "Connect")), noteEl) : null);
+                } } }), React.createElement("span", { className: "eop-flux-sw__track" }, React.createElement("span", { className: "eop-flux-sw__knob" })), !live ? React.createElement("span", { className: "eop-flux-sw__lock" }, "\ud83d\udd12") : null)))))), React.createElement("p", { className: "description", style: { marginTop: '10px' } }, "Edge delivery unlocks when you connect an account. Guaranteed best possible result."), !connected && !pending ? React.createElement("div", { className: "eop-keybox" }, React.createElement("div", { className: "eop-keybox__label" }, "Already started a trial or bought a plan?"), keyRow(false), noteEl) : null);
 }
 function AdaptiveImagesPanel({ settings, onChange, applyServerSettings }) {
     // A site already on the v2.5 per-zone service keeps its existing panel
@@ -1573,7 +1722,7 @@ function AdaptiveImagesPanel({ settings, onChange, applyServerSettings }) {
     // images are signed and connecting works. Show the offer with an honest
     // note and no fabricated number.
     if (state === 'analyzed' && analysis && analysis.measured === false) {
-        return React.createElement("div", { style: { display: "block" }, className: "eop-panel", id: "eop-panel-imgopt" }, React.createElement("h2", null, "Adaptive Images — automatic AVIF/WebP & resizing"), React.createElement("div", { className: "eop-callout", style: { borderLeft: '3px solid var(--eop-accent, #2271b1)' } }, React.createElement("h3", { style: { marginTop: 0 } }, "Your images are ready to optimize"), React.createElement("p", { style: { margin: '4px 0 0', fontSize: '13px', color: '#8a6d1a', background: '#fcf3d7', borderLeft: '3px solid #dba617', padding: '6px 10px', borderRadius: '3px' } }, analysis.note || "We could not measure a before/after preview from this server, but connecting will start optimizing your images."), React.createElement("p", { className: "description", style: { marginTop: '12px' } }, trialLine(analysis.trial_days, analysis.trial_quota_gb) + " Setup is one click; there is nothing to configure afterwards."), React.createElement("p", { style: { marginTop: '12px' } }, React.createElement("button", { type: "button", className: "button button-primary", onClick: doTrial }, "Start 14-day free trial — no card")), React.createElement("p", { style: { margin: '10px 0 0', fontSize: '13px' } }, React.createElement("a", { href: "#", onClick: (e) => { e.preventDefault(); doAnalyze(); } }, busy ? 'Trying again…' : 'Try the preview again')), msgEl, keyLink, keyBox));
+        return React.createElement("div", { style: { display: "block" }, className: "eop-panel", id: "eop-panel-imgopt" }, React.createElement("h2", null, "Adaptive Images — automatic AVIF/WebP & resizing"), React.createElement("div", { className: "eop-callout", style: { borderLeft: '3px solid var(--eop-accent, #2271b1)' } }, React.createElement("h3", { style: { marginTop: 0 } }, "Your images are ready to optimize"), React.createElement("p", { style: { margin: '4px 0 0', fontSize: '13px', color: '#8a6d1a', background: '#fcf3d7', borderLeft: '3px solid #dba617', padding: '6px 10px', borderRadius: '3px' } }, analysis.note || "We could not measure a before/after preview from this server, but connecting will start optimizing your images."), React.createElement("p", { className: "description", style: { marginTop: '12px' } }, trialLine(analysis.trial_days, analysis.trial_quota_gb) + " Setup is one click; there is nothing to configure afterwards."), React.createElement("p", { style: { marginTop: '12px' } }, React.createElement("button", { type: "button", className: "button button-primary", onClick: doTrial }, "Try It Free — no card")), React.createElement("p", { style: { margin: '10px 0 0', fontSize: '13px' } }, React.createElement("a", { href: "#", onClick: (e) => { e.preventDefault(); doAnalyze(); } }, busy ? 'Trying again…' : 'Try the preview again')), msgEl, keyLink, keyBox));
     }
     if (state === 'analyzed' && analysis && analysis.rows && analysis.rows.length) {
         const rows = analysis.rows.slice(0, 4);
@@ -1585,7 +1734,7 @@ function AdaptiveImagesPanel({ settings, onChange, applyServerSettings }) {
                 return null;
             }
             return React.createElement("p", { className: "eop-af__skip" }, "Skipped here: " + parts.join(', ') + " \u2014 these keep loading from your own server.");
-        })(), keyLink, keyBox, msgEl), React.createElement("div", { className: "eop-af__offer" }, React.createElement("div", { className: "eop-af__eyebrow" }, "14-day free trial"), React.createElement("div", { className: "eop-af__head" }, "Keep every image this light \u2014 everywhere."), React.createElement("ul", { className: "eop-af__checks" }, React.createElement("li", null, "No card needed. Start free."), React.createElement("li", null, "Unlimited Images across 119 edge locations"), React.createElement("li", null, "Your site keeps working when it ends")), React.createElement("button", { type: "button", className: "eop-btn eop-btn--solid eop-btn--lg eop-btn--block eop-af__cta", onClick: doTrial }, "Start free trial \u2192"), React.createElement("p", { className: "eop-af__stars" }, "\u2605\u2605\u2605\u2605\u2605  \u201cWent from 61 to 91 on mobile.\u201d"), React.createElement("p", { className: "eop-af__terms" }, "By continuing you agree to the ", React.createElement("a", { href: "https://fluxpress.io/terms", target: "_blank", rel: "noopener" }, "Terms"), " and ", React.createElement("a", { href: "https://fluxpress.io/privacy", target: "_blank", rel: "noopener" }, "Privacy"), "."))));
+        })(), keyLink, keyBox, msgEl), React.createElement("div", { className: "eop-af__offer" }, React.createElement("div", { className: "eop-af__eyebrow" }, "14-day free trial"), React.createElement("div", { className: "eop-af__head" }, "Keep every image this light \u2014 everywhere."), React.createElement("ul", { className: "eop-af__checks" }, React.createElement("li", null, "No card needed. Start free."), React.createElement("li", null, "Unlimited Images across 119 edge locations"), React.createElement("li", null, "Your site keeps working when it ends")), React.createElement("button", { type: "button", className: "eop-btn eop-btn--solid eop-btn--lg eop-btn--block eop-af__cta", onClick: doTrial }, "Start Free \u2192"), React.createElement("p", { className: "eop-af__stars" }, "\u2605\u2605\u2605\u2605\u2605  \u201cWent from 61 to 91 on mobile.\u201d"), React.createElement("p", { className: "eop-af__terms" }, "By continuing you agree to the ", React.createElement("a", { href: "https://fluxpress.io/terms", target: "_blank", rel: "noopener" }, "Terms"), " and ", React.createElement("a", { href: "https://fluxpress.io/privacy", target: "_blank", rel: "noopener" }, "Privacy"), "."))));
     }
     // Idle -> the offer
     return React.createElement("div", { style: { display: "block" }, className: "eop-panel", id: "eop-panel-imgopt" }, React.createElement("h2", null, "Adaptive Images \u2014 automatic AVIF/WebP & resizing"), React.createElement("div", { className: "eop-callout" }, React.createElement("h3", { style: { marginTop: 0 } }, "Next-gen images from 119 edges \u2014 without touching your server"), React.createElement("div", { className: "eop-tiles" }, React.createElement("div", { className: "eop-tile" }, React.createElement("div", { className: "eop-tile__ic" }, React.createElement("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }, React.createElement("rect", { x: 3, y: 3, width: 18, height: 18, rx: 2 }), React.createElement("circle", { cx: 9, cy: 9, r: 2 }), React.createElement("path", { d: "m21 15-5-5L5 21" }))), React.createElement("h5", null, "AVIF + WebP"), React.createElement("p", null, "The right format per browser, automatically. No queues, no credits.")), React.createElement("div", { className: "eop-tile" }, React.createElement("div", { className: "eop-tile__ic" }, React.createElement("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }, React.createElement("polygon", { points: "13 2 3 14 12 14 11 22 21 10 12 10 13 2" }))), React.createElement("h5", null, "Zero server load"), React.createElement("p", null, "No extra copies on disk, no CPU burn. Your originals are never touched.")), React.createElement("div", { className: "eop-tile" }, React.createElement("div", { className: "eop-tile__ic" }, React.createElement("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }, React.createElement("circle", { cx: 12, cy: 12, r: 10 }), React.createElement("path", { d: "M2 12h20M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20" }))), React.createElement("h5", null, "Exact edge sizes"), React.createElement("p", null, "Every device downloads the pixels it renders \u2014 faster LCP, better Core Web Vitals."))), React.createElement("div", { className: "eop-scan-row" }, React.createElement("button", { type: "button", className: "eop-btn eop-btn--solid eop-btn--lg", disabled: busy, onClick: doAnalyze }, "Analyze my images"), React.createElement("span", { className: "eop-scan-note" }, "No account, no email \u2014 about five seconds")), msgEl, keyLink, keyBox));
@@ -1606,7 +1755,7 @@ function CloudSettings({ settings, onChange, isFree }) {
     return React.createElement("div", { className: `eop-collapsible ${open ? 'eop-collapsible--open' : ''}`, style: { marginTop: '18px' } }, React.createElement("button", { type: "button", className: "eop-collapsible__toggle", "aria-expanded": open ? 'true' : 'false', onClick: () => setOpen(!open) }, React.createElement(Icon, { id: open ? 'chev-down' : 'chev-right', cls: "eop-icon eop-icon--xs" }), React.createElement("span", null, "Advanced settings")), React.createElement("div", { className: "eop-collapsible__body", style: !open ? { display: 'none' } : { marginTop: '12px' } }, 
     // Image-only settings. The CSS/JS/fonts (static-asset) toggle lives
     // on the Cloud Optimization tab — this tab is images only.
-    React.createElement(SelectField, { name: "easyopt_fluxcdn_format", label: "Output format", settings: settings, onChange: onChange, options: [
+    React.createElement(SelectField, { name: "easyopt_fluxcdn_format", label: "Image format", settings: settings, onChange: onChange, options: [
             { value: 'auto', label: 'Auto (recommended) — AVIF, then WebP, then original, per browser' },
             { value: 'webp', label: 'Always WebP' },
             { value: 'avif', label: 'Always AVIF (large images fall back to WebP)' },
@@ -1617,19 +1766,18 @@ function CloudSettings({ settings, onChange, isFree }) {
             { value: '75', label: '75' },
             { value: '70', label: '70' },
             { value: '60', label: '60 — smallest files' },
-        ] }), React.createElement("div", { className: "easyopt-row" }, React.createElement("label", { htmlFor: "easyopt_fluxcdn_max_width" }, "Max image width (px)"), React.createElement("input", { type: "number", id: "easyopt_fluxcdn_max_width", name: "easyopt_fluxcdn_max_width", min: 0, max: 4096, step: 1, value: settings.easyopt_fluxcdn_max_width === '' ? 2560 : Number(settings.easyopt_fluxcdn_max_width), onChange: (e) => onChange('easyopt_fluxcdn_max_width', e.target.value), style: { width: '90px' } })), React.createElement("p", { className: "description" }, "Caps oversized originals — images are never upscaled. 2560 matches WordPress' large-image threshold. 0 disables the cap."), React.createElement(Check, { name: "easyopt_fluxcdn_srcset_resize", label: "Exact srcset sizes", bold: true, settings: settings, onChange: onChange, desc: isFree
-            ? "Delivers each responsive candidate at its declared width. On the free plan each image is optimized at a fixed set of widths; paid plans size every candidate exactly."
-            : "Resize each responsive (srcset) candidate to its declared width, so every device downloads exactly the pixels it renders." }), React.createElement(Check, { name: "easyopt_fluxcdn_error_fallback", label: "Fallback to original on error", bold: true, settings: settings, onChange: onChange, desc: "If a CDN image fails to load in the browser, automatically swap back to the original image URL. Keeps images from ever appearing broken." }), React.createElement(PopupField, { name: "easyopt_image_exclude", title: "Exclude from CDN", help: "Class names or file paths to skip.", placeholder: ".no-cdn\n/uploads/2024/", value: settings.easyopt_image_exclude, onChange: onChange }), CFG().isElementor && React.createElement("div", { style: { marginTop: '14px' } }, React.createElement(Check, { name: "easyopt_elementor_bg_cdn", label: "Rewrite Elementor Background Images", bold: true, settings: settings, onChange: onChange, desc: "Applies CDN rewriting to Elementor's inline background-image styles." }))));
+        ] }), React.createElement("div", { className: "easyopt-row" }, React.createElement("label", { htmlFor: "easyopt_fluxcdn_max_width" }, "Max image width (px)"), React.createElement("input", { type: "number", id: "easyopt_fluxcdn_max_width", name: "easyopt_fluxcdn_max_width", min: 0, max: 4096, step: 1, value: settings.easyopt_fluxcdn_max_width === '' ? 2560 : Number(settings.easyopt_fluxcdn_max_width), onChange: (e) => onChange('easyopt_fluxcdn_max_width', e.target.value), style: { width: '90px' } })), React.createElement("p", { className: "description" }, "Shrinks oversized images when delivered; never enlarges. 2560 matches WordPress's big-image limit. 0 turns it off."), React.createElement(Check, { name: "easyopt_fluxcdn_srcset_resize", label: "Exact srcset sizes", bold: true, settings: settings, onChange: onChange, desc: isFree
+            ? "Delivers each image size at its exact width. On the free plan, images use a fixed set of widths; paid plans size every one exactly."
+            : "Resizes each srcset size to its exact width, so every device downloads only the pixels it shows." }), React.createElement(Check, { name: "easyopt_fluxcdn_error_fallback", label: "Fallback to original on error", bold: true, settings: settings, onChange: onChange, desc: "If an optimized image fails to load, the browser shows the original instead, so images don't appear broken." }), React.createElement(PopupField, { name: "easyopt_image_exclude", title: "Exclude from CDN", help: "Class names or file paths to skip.", placeholder: ".no-cdn\n/uploads/2024/", value: settings.easyopt_image_exclude, onChange: onChange }), CFG().isElementor && React.createElement("div", { style: { marginTop: '14px' } }, React.createElement(Check, { name: "easyopt_elementor_bg_cdn", label: "Rewrite Elementor Background Images", bold: true, settings: settings, onChange: onChange, desc: "Also serves Elementor background images through the CDN." }))));
 }
 function ImageCdnPanel({ settings, onChange, applyServerSettings }) {
     const on = Number(settings.easyopt_img_opt) === 1;
     const isElementor = CFG().isElementor;
-    const storedKey = settings.easyopt_fluxcdn_api_key || '';
+    // (2.8.0) The stored key stays on the server; its hint is
+    // "fpcdn_{account}.…{last4}" (EasyOpt_Config::secret_hints()).
+    const storedKey = secretHint('easyopt_fluxcdn_api_key');
     const verified = Number(settings.easyopt_fluxcdn_verified) === 1;
-    // Key shape must match server-side EasyOpt_CDN::parse_key():
-    // fpcdn_{account}.{key_hex}.{salt_hex}
-    const KEY_RE = /^fpcdn_[a-z0-9][a-z0-9_-]{2,31}\.[0-9a-fA-F]{32,128}\.[0-9a-fA-F]{32,128}$/;
-    const connected = verified && KEY_RE.test(storedKey);
+    const connected = verified && /^fpcdn_[a-z0-9][a-z0-9_-]{2,31}\./.test(storedKey);
     const account = connected ? storedKey.replace(/^fpcdn_/, '').split('.')[0] : '';
     const [keyInput, setKeyInput] = useState('');
     const [endpointInput, setEndpointInput] = useState(settings.easyopt_fluxcdn_endpoint || '');
@@ -1674,10 +1822,11 @@ function ImageCdnPanel({ settings, onChange, applyServerSettings }) {
             setBusy(false);
             setMsg((r && r.message) || 'Disconnected.');
             setMsgColor('');
+            delete SECRET_HINTS.easyopt_fluxcdn_api_key;
             applyServerSettings({ easyopt_fluxcdn_api_key: '', easyopt_fluxcdn_verified: '0' });
         }).catch(() => { setBusy(false); });
     };
-    const maskedKey = connected ? storedKey.slice(0, 13) + '…' + storedKey.slice(-4) : '';
+    const maskedKey = connected ? storedKey : '';
     const [usage, setUsage] = useState(null);
     const [probeState, setProbeState] = useState('');
     useEffect(() => {
@@ -1714,36 +1863,47 @@ function ImageCdnPanel({ settings, onChange, applyServerSettings }) {
 //  BLOAT PANEL — without heartbeat/cron (moved to own tab)
 // ═══════════════════════════════════════════════════
 function BloatPanel({ settings, onChange }) {
-    const items = [
-        ['emojis', 'Disable Emojis', 'Removes the wp-emoji JS + the emoji detection script.'],
-        ['embeds', 'Disable WP Embeds', 'Removes wp-embed.min.js and oEmbed discovery.'],
-        ['xmlrpc', 'Disable XML-RPC', 'Closes /xmlrpc.php and removes X-Pingback header.'],
-        ['jquery_migrate', 'Remove jQuery Migrate', 'Strips jquery-migrate (only needed for old themes).'],
-        ['wp_version', 'Hide WordPress Version', 'Removes the generator meta tag and ?ver= query strings.'],
-        ['rsd_wlw', 'Remove RSD / WLW Manifest', 'Removes legacy RSD/WLW blog-editor links from your page header (most sites don\'t need them).'],
-        ['shortlinks', 'Remove Shortlinks', 'Removes the wp-shortlink tag from your page header.'],
-        ['rss_feeds', 'Disable RSS Feeds', 'Returns 404 for /feed/ URLs. ⚠ Breaks podcast plugins and RSS readers.'],
-        ['self_pingbacks', 'Disable Self Pingbacks', 'Stops your site from pinging itself.'],
-        ['rest_api_logged_out', 'Limit REST API to Logged-in Users', 'Returns 401 to anonymous wp-json requests. ⚠ May break contact forms, WooCommerce Store API, and headless setups.'],
-        ['wc_cart_fragments', 'Disable WooCommerce Cart Fragments', 'Removes wc-cart-fragments AJAX script.'],
-        ['app_passwords', 'Disable Application Passwords', 'Hides the Application Passwords UI.'],
-        ['dashicons', 'Disable Dashicons (front-end)', 'Stops loading dashicons.css for logged-out visitors.'],
-        ['block_css', 'Disable Block Library CSS', 'Removes wp-block-library CSS on the frontend. Safe if you don\'t use Gutenberg blocks in your content.'],
+    const front = [
+        ['emojis', 'Disable Emojis', 'Stops loading WordPress\'s emoji script. Emojis still show.'],
+        ['embeds', 'Disable WP Embeds', 'Removes post-embed code. YouTube embeds still work.'],
+        ['jquery_migrate', 'Remove jQuery Migrate', 'Removes jQuery Migrate (only old themes need it).'],
+        ['dashicons', 'Disable Dashicons (front-end)', 'Removes WordPress admin icons for logged-out visitors.'],
+        ['block_css', 'Disable Block Library CSS', 'Removes WordPress and WooCommerce block styles. Leave off if you build pages with blocks.'],
+        ['wc_cart_fragments', 'Disable WooCommerce Cart Fragments', 'Removes mini-cart refresh; cached pages may show wrong counts.'],
+        ['rsd_wlw', 'Remove RSD / WLW Manifest', 'Removes old blog-editor links from your page code (most sites don\'t need them).'],
+        ['shortlinks', 'Remove Shortlinks', 'Removes the hidden ?p= shortlink tag from page code.'],
+        ['self_pingbacks', 'Disable Self Pingbacks', 'Stops your site sending pingbacks to itself.'],
+        ['rss_feeds', 'Disable RSS Feeds', 'Turns off /feed/ pages (they show 404).', 'Breaks podcast plugins and RSS readers.'],
     ];
-    return (React.createElement("div", { style: { display: "block" }, className: "eop-panel", id: "eop-panel-bloat" }, React.createElement("h2", null, "Bloat Removal"), React.createElement("p", { className: "description", style: { marginBottom: '18px' } }, "Strip optional WordPress features that most sites do not use. Each toggle is independent."), items.map(([key, label, desc]) => React.createElement(Check, { key: key, name: `easyopt_bloat_${key}`, label: label, bold: true, desc: desc, settings: settings, onChange: onChange }))));
+    const security = [
+        ['xmlrpc', 'Disable XML-RPC', 'Turns off XML-RPC (used by some apps) and pingbacks.'],
+        ['wp_version', 'Hide WordPress Version', 'Hides your WordPress version in page code.'],
+        ['app_passwords', 'Disable Application Passwords', 'Turns off app passwords; apps using them stop.'],
+        ['rest_api_logged_out', 'Limit REST API to Logged-in Users', 'Blocks the REST API for logged-out visitors.', 'Popular forms and WooCommerce checkout keep working; others may break.'],
+    ];
+    const rows = (list) => list.map(([key, label, desc, caution]) => React.createElement(Check, { key: key, name: `easyopt_bloat_${key}`, label: label, bold: true, desc: desc, caution: caution, settings: settings, onChange: onChange }));
+    return (React.createElement(CardPage, { id: "cleanup" }, React.createElement(Card, { title: "Visitor-side extras" }, rows(front)), React.createElement(Card, { title: "Security tweaks" }, rows(security))));
 }
 // ═══════════════════════════════════════════════════
 //  CLOUDFLARE PANEL
 // ═══════════════════════════════════════════════════
 function CloudflarePanel({ settings, onChange }) {
     const on = Number(settings.easyopt_cf_enabled) === 1;
+    const cdnOn = Number(settings.easyopt_cdn_custom) === 1;
+    const fluxAssets = Number(settings.easyopt_cloud_assets) === 1;
+    const [cdnH, setCdnH] = useState((CFG().cdnHealth || {}).custom || null);
+    const [cdnBusy, setCdnBusy] = useState(false);
+    const checkCdn = () => {
+        setCdnBusy(true);
+        api.post('/cdn/check', {}).then((r) => { setCdnH((r && r.custom) || null); setCdnBusy(false); }).catch(() => setCdnBusy(false));
+    };
     const [msg, setMsg] = useState('');
     const [msgColor, setMsgColor] = useState('');
     const doTest = () => {
         setMsg('Testing…');
         setMsgColor('');
         api.post('/cloudflare/test', { token: settings.easyopt_cf_api_token || '', zone_id: settings.easyopt_cf_zone_id || '' }).then((r) => {
-            setMsg(r?.message || (r?.success ? 'OK' : 'Failed'));
+            setMsg(r?.message || (r?.success ? 'OK' : 'Connection failed'));
             setMsgColor(r?.success ? 'var(--eop-success)' : 'var(--eop-danger)');
         });
     };
@@ -1753,7 +1913,30 @@ function CloudflarePanel({ settings, onChange }) {
         setMsg('Purging…');
         api.post('/cloudflare/purge').then((r) => { setMsg(r?.message || 'Done'); setMsgColor(r?.success ? 'var(--eop-success)' : 'var(--eop-danger)'); });
     };
-    return (React.createElement("div", { style: { display: "block" }, className: "eop-panel", id: "eop-panel-cloudflare" }, React.createElement("h2", null, "Cloudflare"), React.createElement("p", { className: "description", style: { marginBottom: '18px' } }, "When page cache is cleared, also tell Cloudflare to drop its edge copy."), React.createElement("label", null, React.createElement("input", { type: "checkbox", id: "easyopt_cf_enabled", name: "easyopt_cf_enabled", value: "1", checked: on, onChange: () => onChange('easyopt_cf_enabled', on ? '0' : '1') }), " ", React.createElement("strong", null, "Enable Cloudflare integration")), React.createElement("div", { className: "cffield", style: !on ? { display: 'none' } : {} }, React.createElement(Collapsible, { title: "How to get your API Token & Zone ID" }, React.createElement("div", { style: { lineHeight: '1.7', fontSize: '13px' } }, React.createElement("strong", null, "API Token"), React.createElement("ol", { style: { margin: '6px 0 14px', paddingLeft: '20px' } }, React.createElement("li", null, "Log in to your ", React.createElement("a", { href: "https://dash.cloudflare.com/profile/api-tokens", target: "_blank", rel: "noopener" }, "Cloudflare dashboard \u2192 My Profile \u2192 API Tokens")), React.createElement("li", null, "Click ", React.createElement("strong", null, "Create Token")), React.createElement("li", null, "Use the ", React.createElement("em", null, "\"Edit zone DNS\""), " template, or create a custom token with ", React.createElement("strong", null, "Zone \u2192 Cache Purge \u2192 Purge"), " permission"), React.createElement("li", null, "Set zone resources to ", React.createElement("strong", null, "Include \u2192 Specific zone \u2192 your domain")), React.createElement("li", null, "Click ", React.createElement("strong", null, "Continue to summary \u2192 Create Token")), React.createElement("li", null, "Copy the token — it's shown only once")), React.createElement("strong", null, "Zone ID"), React.createElement("ol", { style: { margin: '6px 0 0', paddingLeft: '20px' } }, React.createElement("li", null, "Go to your ", React.createElement("a", { href: "https://dash.cloudflare.com/", target: "_blank", rel: "noopener" }, "Cloudflare dashboard"), " \u2192 select your site"), React.createElement("li", null, "On the ", React.createElement("strong", null, "Overview"), " page, scroll down to the right sidebar"), React.createElement("li", null, "Your ", React.createElement("strong", null, "Zone ID"), " is listed under the ", React.createElement("strong", null, "API"), " section"), React.createElement("li", null, "Click to copy it")))), React.createElement("div", { className: "easyopt-row", style: { marginTop: '14px' } }, React.createElement("label", { htmlFor: "easyopt_cf_api_token" }, "API Token"), React.createElement("input", { type: "password", id: "easyopt_cf_api_token", name: "easyopt_cf_api_token", value: settings.easyopt_cf_api_token || '', onChange: (e) => onChange('easyopt_cf_api_token', e.target.value), autoComplete: "new-password", style: { minWidth: '380px', fontFamily: 'monospace' } })), React.createElement("div", { className: "easyopt-row" }, React.createElement("label", { htmlFor: "easyopt_cf_zone_id" }, "Zone ID"), React.createElement("input", { type: "text", id: "easyopt_cf_zone_id", name: "easyopt_cf_zone_id", value: settings.easyopt_cf_zone_id || '', onChange: (e) => onChange('easyopt_cf_zone_id', e.target.value), style: { minWidth: '380px', fontFamily: 'monospace' } })), React.createElement(SelectField, { name: "easyopt_cf_purge_strategy", label: "Purge Strategy", settings: settings, onChange: onChange, options: [{ value: 'host', label: 'By cache tag (Enterprise) — fall back to everything' }, { value: 'everything', label: 'Purge everything (all plans)' }] }), React.createElement("div", { className: "easyopt-field-row", style: { marginTop: '14px' } }, React.createElement("button", { type: "button", className: "button button-secondary", onClick: doTest }, "Test Connection"), ' ', React.createElement("button", { type: "button", className: "button button-secondary", onClick: doPurge }, "Purge Cloudflare Now"), React.createElement("span", { style: { marginLeft: '12px', color: msgColor, fontSize: '13px' } }, msg)))));
+    return (React.createElement(CardPage, { id: "purge-cdn" }, React.createElement(MasterCard, { name: "easyopt_cf_enabled", title: "Enable Cloudflare integration", desc: "When you clear Easy Optimizer's cache, Cloudflare's copy is cleared too.", settings: settings, onChange: onChange }, React.createElement("div", { className: "easyopt-row" }, React.createElement("label", { htmlFor: "easyopt_cf_api_token" }, "API Token"), React.createElement(SecretInput, { name: "easyopt_cf_api_token", settings: settings, onChange: onChange, style: { fontFamily: 'monospace' } })), React.createElement("div", { className: "easyopt-row" }, React.createElement("label", { htmlFor: "easyopt_cf_zone_id" }, "Zone ID"), React.createElement("input", { type: "text", id: "easyopt_cf_zone_id", name: "easyopt_cf_zone_id", value: settings.easyopt_cf_zone_id || '', onChange: (e) => onChange('easyopt_cf_zone_id', e.target.value), style: { fontFamily: 'monospace' } })), React.createElement(SelectField, { name: "easyopt_cf_purge_strategy", label: "Purge Strategy", settings: settings, onChange: onChange, options: [{ value: 'host', label: 'By cache tag (Enterprise only) — others purge everything' }, { value: 'everything', label: 'Purge everything (all plans)' }] }), React.createElement(CardActions, null, React.createElement("button", { type: "button", className: "button button-secondary", onClick: doTest }, "Test Connection"), React.createElement("button", { type: "button", className: "button button-secondary", onClick: doPurge }, "Purge Cloudflare Now"), msg && React.createElement("span", { style: { color: msgColor, fontSize: '13px' } }, msg)), React.createElement(Collapsible, { title: "How to get your API Token & Zone ID" }, React.createElement("div", { style: { lineHeight: '1.7', fontSize: '13px' } }, React.createElement("strong", null, "API Token"), React.createElement("ol", { style: { margin: '6px 0 14px', paddingLeft: '20px' } }, React.createElement("li", null, "Log in to your ", React.createElement("a", { href: "https://dash.cloudflare.com/profile/api-tokens", target: "_blank", rel: "noopener" }, "Cloudflare dashboard \u2192 My Profile \u2192 API Tokens")), React.createElement("li", null, "Click ", React.createElement("strong", null, "Create Token")), React.createElement("li", null, "Choose ", React.createElement("em", null, "Create Custom Token"), " and give it only the ", React.createElement("strong", null, "Zone \u2192 Cache Purge \u2192 Purge"), " permission"), React.createElement("li", null, "Set zone resources to ", React.createElement("strong", null, "Include \u2192 Specific zone \u2192 your domain")), React.createElement("li", null, "Click ", React.createElement("strong", null, "Continue to summary \u2192 Create Token")), React.createElement("li", null, "Copy the token — it's shown only once")), React.createElement("strong", null, "Zone ID"), React.createElement("ol", { style: { margin: '6px 0 0', paddingLeft: '20px' } }, React.createElement("li", null, "Go to your ", React.createElement("a", { href: "https://dash.cloudflare.com/", target: "_blank", rel: "noopener" }, "Cloudflare dashboard"), " \u2192 select your site"), React.createElement("li", null, "On the ", React.createElement("strong", null, "Overview"), " page, look in the right-hand column"), React.createElement("li", null, "Your ", React.createElement("strong", null, "Zone ID"), " is in the ", React.createElement("strong", null, "API"), " section"), React.createElement("li", null, "Click to copy it"))))), React.createElement(MasterCard, { name: "easyopt_cdn_custom", title: "Use my CDN", desc: "Load your theme, plugin and media files from a CDN you already use (BunnyCDN, KeyCDN, CloudFront or any pull zone). Not needed with Cloudflare.", settings: settings, onChange: onChange }, fluxAssets && React.createElement(DepWarning, { message: "Cloud Optimization is delivering your CSS, JS and fonts, so this is not used until that is turned off." }), React.createElement("div", { className: "easyopt-row" }, React.createElement("label", { htmlFor: "easyopt_cdn_custom_url" }, "CDN URL"), React.createElement("input", { type: "url", id: "easyopt_cdn_custom_url", name: "easyopt_cdn_custom_url", placeholder: "https://cdn.example.com", value: settings.easyopt_cdn_custom_url || '', onChange: (e) => onChange('easyopt_cdn_custom_url', e.target.value), style: { fontFamily: 'monospace' } }), React.createElement("p", { className: "description" }, "Your CSS, JavaScript, fonts, images and videos (from /wp-content/ and /wp-includes/) load from this address. Set your CDN's origin to this site's URL. Logged-in users still load files from your server.")), React.createElement(CardActions, null, React.createElement("button", { type: "button", className: "button button-secondary", disabled: cdnBusy, onClick: checkCdn }, cdnBusy ? 'Checking…' : 'Check now'), React.createElement("span", { style: { fontSize: '13px', color: !cdnH ? 'inherit' : (!cdnH.ok ? 'var(--eop-danger)' : (cdnH.cors === false ? 'var(--eop-warning, #b26200)' : 'var(--eop-success)')) } }, !cdnH
+        ? 'Not checked yet. Saving the address checks it.'
+        : !cdnH.ok
+            ? 'Not reachable (' + (cdnH.error || 'no answer') + '). Files load from your server until it answers; checked every 15 minutes.'
+            : cdnH.cors === false
+                ? 'Your CDN works, but it sends no CORS header, so fonts and stylesheets keep loading from your server. Turn on Access-Control-Allow-Origin at your CDN, then check again.'
+                : 'Reachable \u2713 \u2014 checked ' + eopAgo(Date.now() / 1000 - cdnH.checked) + '.')), React.createElement(PopupField, { name: "easyopt_cdn_custom_exclude", title: "Exclude files", help: "Parts of file URLs to keep on your server (one per line).", placeholder: "/plugins/some-plugin/\n.mp4", value: settings.easyopt_cdn_custom_exclude, onChange: onChange })), React.createElement(ServerCachesCard, null)));
+}
+// Detected server caches, on the page about what gets told when the cache is
+// cleared. The Dashboard keeps its own copy of this card.
+function ServerCachesCard() {
+    const [stats, setStats] = useState(__eopStatsCache || CFG().stats || null);
+    useEffect(() => {
+        api.get('/dashboard-stats').then((r) => {
+            if (r) {
+                __eopStatsCache = r;
+                setStats(r);
+            }
+        });
+    }, []);
+    const layers = (stats && stats.server_cache && stats.server_cache.layers) || [];
+    if (!layers.length)
+        return null;
+    return React.createElement(Card, { title: "Detected server caches", desc: "These server caches are cleared automatically when you clear all cache. Saving a post clears only the pages that changed." }, React.createElement("div", { className: "eop-set__chips" }, layers.map((l) => (React.createElement("span", { key: l.key, className: "eop-set__chip" }, React.createElement("span", { className: "eop-set__chip-dot" }), l.label)))));
 }
 // ═══════════════════════════════════════════════════
 //  DATABASE — CLEANUP sub-tab
@@ -1796,16 +1979,16 @@ function DbCleanupSubPanel({ settings, onChange }) {
                     setCounts(r.counts);
                 const rep = r?.report || {};
                 Object.keys(rep).forEach(k => { total += parseInt(rep[k], 10) || 0; });
-                setCleanMsg(`Running… ${total} items removed so far.`);
+                setCleanMsg(`Running… ${total} items deleted so far.`);
                 if (r?.done) {
-                    setCleanMsg(`Done. ${total} items removed.`);
+                    setCleanMsg(`Done. ${total} items deleted.`);
                     setCleaning(false);
                     loadSnaps();
                     return;
                 }
             }
             catch {
-                setCleanMsg('Network error.');
+                setCleanMsg('Connection lost. Run it again.');
                 setCleaning(false);
                 return;
             }
@@ -1837,9 +2020,9 @@ function DbCleanupSubPanel({ settings, onChange }) {
                     return;
                 }
                 total += r.inserted || 0;
-                setRestoreMsg(`Restoring… ${total} rows so far.`);
+                setRestoreMsg(`Restoring… ${total} items so far.`);
                 if (r.done) {
-                    setRestoreMsg(`✓ Restore complete. ${total} rows restored.`);
+                    setRestoreMsg(`✓ Restore complete. ${total} items restored.`);
                     api.get('/database/counts').then((c) => {
                         if (c)
                             setCounts(c);
@@ -1851,18 +2034,18 @@ function DbCleanupSubPanel({ settings, onChange }) {
                 offset = r.next_offset || 0;
             }
             catch {
-                setRestoreMsg('Network error during restore.');
+                setRestoreMsg('Connection lost. Run the restore again.');
                 break;
             }
         }
         setRestoring('');
     };
-    const taskHelp = { post_revisions: 'Old revision rows.', auto_drafts: 'Auto-created drafts.', trashed_posts: 'Posts in trash.', spam_comments: 'Spam comments.', trashed_comments: 'Trashed comments.', expired_transients: 'Expired cached values.', all_transients: 'All transients.', optimize_tables: 'Defragment tables.' };
-    return (React.createElement("div", null, React.createElement("h2", { className: "eop-section-h", style: { marginTop: 0 } }, "Database Cleanup"), React.createElement("p", { className: "description", style: { marginBottom: '18px' } }, "Reclaim space by removing revisions, trash, expired transients and orphaned data."), React.createElement("div", { className: "easyopt-field-row" }, Object.entries(tasks).map(([key, label]) => {
+    const taskHelp = { post_revisions: 'Every revision; current versions stay.', auto_drafts: 'Empty drafts WordPress made itself.', trashed_posts: 'All Trash items, incl. products.', spam_comments: 'Spam comments.', trashed_comments: 'Trashed comments.', expired_transients: 'Expired temporary data.', all_transients: 'All temporary data, even unexpired.', optimize_tables: 'Frees space; skips tables over 100 MB.' };
+    return (React.createElement("div", { style: { display: "block" }, className: "eop-panel", id: "eop-panel-database" }, React.createElement("div", { className: "easyopt-field-row" }, Object.entries(tasks).map(([key, label]) => {
         const opt = `easyopt_db_${key}`;
         const cnt = counts ? counts[key] : null;
         return (React.createElement("div", { key: key, className: "easyopt-db-row", style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--eop-border-soft)' } }, React.createElement("div", { style: { flex: 1, minWidth: 0 } }, React.createElement("label", { style: { display: 'block', fontWeight: 500 } }, React.createElement("input", { type: "checkbox", name: opt, value: "1", checked: Number(settings[opt]) === 1, onChange: () => onChange(opt, Number(settings[opt]) === 1 ? '0' : '1') }), " ", label), React.createElement("p", { className: "description", style: { margin: '4px 0 0 24px', fontSize: '12.5px' } }, taskHelp[key] || '')), cnt != null && key !== 'optimize_tables' && React.createElement("span", { className: "easyopt-db-count", style: { marginLeft: '14px', fontSize: '13px', background: 'var(--eop-bg-tab)', padding: '2px 10px', borderRadius: '999px', color: 'var(--eop-text-muted)' } }, nf(cnt), " items"), cnt == null && countsLoading && key !== 'optimize_tables' && React.createElement("span", { style: { marginLeft: '14px', fontSize: '12px', color: 'var(--eop-text-muted)' } }, "…")));
-    })), React.createElement("div", { className: "easyopt-field-row", style: { marginTop: '18px' } }, React.createElement("button", { type: "button", className: "button button-secondary", disabled: cleaning, onClick: runCleanup }, cleaning ? 'Running…' : 'Run Cleanup Now'), React.createElement("span", { style: { marginLeft: '12px', fontSize: '13px' } }, cleanMsg)), React.createElement("h3", { style: { marginTop: '28px' } }, "Scheduled Cleanup"), React.createElement(Check, { name: "easyopt_db_cron_enabled", label: "Enable scheduled cleanup", settings: settings, onChange: onChange }), React.createElement("div", { className: "easyopt-cron-fields", style: Number(settings.easyopt_db_cron_enabled) !== 1 ? { display: 'none' } : {} }, React.createElement(SelectField, { name: "easyopt_db_schedule", label: "Frequency", settings: settings, onChange: onChange, options: [{ value: 'daily', label: 'Daily' }, { value: 'weekly', label: 'Weekly' }, { value: 'monthly', label: 'Monthly' }] })), React.createElement("h3", { style: { marginTop: '28px' } }, "Snapshots"), React.createElement(Check, { name: "easyopt_db_snapshot_enabled", label: "Enable automatic snapshots before cleanup", settings: settings, onChange: onChange }), React.createElement("div", { className: "easyopt-snapshot-fields", style: Number(settings.easyopt_db_snapshot_enabled) !== 1 ? { display: 'none' } : {} }, React.createElement("div", { className: "easyopt-row" }, React.createElement("label", null, "Retention (days)"), React.createElement("input", { type: "number", name: "easyopt_db_snapshot_retention_days", value: settings.easyopt_db_snapshot_retention_days ?? 14, onChange: (e) => onChange('easyopt_db_snapshot_retention_days', e.target.value), min: "1", max: "90", style: { width: '80px' } }))), React.createElement("div", { id: "easyopt_db_snapshots_list", style: { marginTop: '14px' } }, snapshots.length === 0 ? React.createElement("p", null, "No snapshots yet.") : React.createElement(React.Fragment, null, React.createElement("p", { className: "description" }, "Snapshots kept for ", React.createElement("strong", null, retention, " days"), "."), React.createElement("table", { className: "widefat striped" }, React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", null, "When"), React.createElement("th", null, "Task"), React.createElement("th", null, "Rows"), React.createElement("th", null, "Size"), React.createElement("th", null))), React.createElement("tbody", null, snapshots.map((s, i) => React.createElement("tr", { key: s.basename || i }, React.createElement("td", null, s.started_at ? new Date(s.started_at * 1000).toLocaleString() : '—'), React.createElement("td", null, React.createElement("code", null, s.task || '')), React.createElement("td", null, nf(s.row_count), " rows"), React.createElement("td", null, s.size_bytes > 1024 * 1024 ? (s.size_bytes / 1024 / 1024).toFixed(1) + ' MB' : Math.round(s.size_bytes / 1024) + ' KB'), React.createElement("td", null, React.createElement("button", { type: "button", className: "button", disabled: !!restoring, onClick: () => setConfirmRestore(s.basename) }, restoring === s.basename ? 'Restoring…' : 'Restore'), " ", React.createElement("button", { type: "button", className: "button eop-snap-delete", onClick: () => deleteSnap(s.basename) }, "Delete"))))))), restoreMsg && React.createElement("p", { style: { marginTop: '10px', fontSize: '13px', color: restoreMsg.startsWith('✓') ? '#00a32a' : restoreMsg.includes('fail') || restoreMsg.includes('error') ? '#d63638' : '#666' } }, restoreMsg)), React.createElement(ConfirmModal, { open: !!confirmRestore, title: "Restore Snapshot", message: "Are you sure you want to restore this snapshot? Existing rows with matching IDs will be skipped.", confirmLabel: "Restore", onConfirm: () => restoreSnap(confirmRestore), onCancel: () => setConfirmRestore('') })));
+    })), React.createElement("div", { className: "easyopt-field-row", style: { marginTop: '18px' } }, React.createElement("button", { type: "button", className: "button button-secondary", disabled: cleaning, onClick: runCleanup }, cleaning ? 'Running…' : 'Run Cleanup Now'), React.createElement("span", { style: { marginLeft: '12px', fontSize: '13px' } }, cleanMsg)), React.createElement("p", { className: "description", style: { margin: '6px 0 0' } }, "Deleted for good unless Snapshots are on."), React.createElement("h3", { style: { marginTop: '28px' } }, "Scheduled Cleanup"), React.createElement(Check, { name: "easyopt_db_cron_enabled", label: "Schedule automatic cleanup", settings: settings, onChange: onChange }), React.createElement("div", { className: "easyopt-cron-fields", style: Number(settings.easyopt_db_cron_enabled) !== 1 ? { display: 'none' } : {} }, React.createElement(SelectField, { name: "easyopt_db_schedule", label: "Frequency", settings: settings, onChange: onChange, options: [{ value: 'daily', label: 'Daily' }, { value: 'weekly', label: 'Weekly' }, { value: 'monthly', label: 'Monthly' }] })), React.createElement("h3", { style: { marginTop: '28px' } }, "Snapshots"), React.createElement(Check, { name: "easyopt_db_snapshot_enabled", label: "Save a restorable snapshot before cleanup", settings: settings, onChange: onChange }), React.createElement("div", { className: "easyopt-snapshot-fields", style: Number(settings.easyopt_db_snapshot_enabled) !== 1 ? { display: 'none' } : {} }, React.createElement("div", { className: "easyopt-row" }, React.createElement("label", null, "Keep snapshots for (days)"), React.createElement("input", { type: "number", name: "easyopt_db_snapshot_retention_days", value: settings.easyopt_db_snapshot_retention_days ?? 14, onChange: (e) => onChange('easyopt_db_snapshot_retention_days', e.target.value), min: "1", max: "90", style: { width: '80px' } }))), React.createElement("div", { id: "easyopt_db_snapshots_list", style: { marginTop: '14px' } }, snapshots.length === 0 ? React.createElement("p", null, "No snapshots yet.") : React.createElement(React.Fragment, null, React.createElement("p", { className: "description" }, "Snapshots kept for ", React.createElement("strong", null, retention, " days"), "."), React.createElement("table", { className: "widefat striped" }, React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", null, "When"), React.createElement("th", null, "Task"), React.createElement("th", null, "Rows"), React.createElement("th", null, "Size"), React.createElement("th", null))), React.createElement("tbody", null, snapshots.map((s, i) => React.createElement("tr", { key: s.basename || i }, React.createElement("td", null, s.started_at ? new Date(s.started_at * 1000).toLocaleString() : '—'), React.createElement("td", null, React.createElement("code", null, s.task || '')), React.createElement("td", null, nf(s.row_count), " rows"), React.createElement("td", null, s.size_bytes > 1024 * 1024 ? (s.size_bytes / 1024 / 1024).toFixed(1) + ' MB' : Math.round(s.size_bytes / 1024) + ' KB'), React.createElement("td", null, React.createElement("button", { type: "button", className: "button", disabled: !!restoring, onClick: () => setConfirmRestore(s.basename) }, restoring === s.basename ? 'Restoring…' : 'Restore'), " ", React.createElement("button", { type: "button", className: "button eop-snap-delete", onClick: () => deleteSnap(s.basename) }, "Delete"))))))), restoreMsg && React.createElement("p", { style: { marginTop: '10px', fontSize: '13px', color: restoreMsg.startsWith('✓') ? '#00a32a' : restoreMsg.includes('fail') || restoreMsg.includes('error') ? '#d63638' : '#666' } }, restoreMsg)), React.createElement(ConfirmModal, { open: !!confirmRestore, title: "Restore Snapshot", message: "Restore this snapshot? Items already on your site are skipped, not overwritten.", confirmLabel: "Restore", onConfirm: () => restoreSnap(confirmRestore), onCancel: () => setConfirmRestore('') })));
 }
 // ═══════════════════════════════════════════════════
 //  DATABASE — AUTOLOAD HEALTH sub-tab
@@ -1885,22 +2068,11 @@ function DbAutoloadSubPanel({ settings, onChange }) {
                 fetchAutoload();
         }).catch(() => setAlToggleBusy(''));
     };
-    return (React.createElement("div", null, React.createElement("h2", { className: "eop-section-h", style: { marginTop: 0 } }, "Autoload Health"), React.createElement("p", { className: "description", style: { marginBottom: '14px' } }, "WordPress loads all autoloaded options into memory on every page request. Large autoload sizes slow down every page."), !autoload && React.createElement("button", { type: "button", className: "button button-secondary", disabled: autoloadLoading, onClick: fetchAutoload }, autoloadLoading ? 'Loading…' : 'Check Autoload Size'), autoload && React.createElement(React.Fragment, null, React.createElement("div", { style: { display: 'flex', gap: '24px', marginBottom: '18px', flexWrap: 'wrap' } }, React.createElement("div", { style: { background: 'var(--eop-bg-tab)', borderRadius: '8px', padding: '14px 20px', minWidth: '140px' } }, React.createElement("div", { style: { fontSize: '12px', color: 'var(--eop-text-muted)', marginBottom: '4px' } }, "Total Autoload Size"), React.createElement("div", { style: { fontSize: '22px', fontWeight: 700, color: (autoload.total_bytes || 0) > 1048576 ? 'var(--eop-danger)' : (autoload.total_bytes || 0) > 524288 ? '#d97706' : 'var(--eop-success)' } }, autoload.total_human)), React.createElement("div", { style: { background: 'var(--eop-bg-tab)', borderRadius: '8px', padding: '14px 20px', minWidth: '140px' } }, React.createElement("div", { style: { fontSize: '12px', color: 'var(--eop-text-muted)', marginBottom: '4px' } }, "Autoloaded Options"), React.createElement("div", { style: { fontSize: '22px', fontWeight: 700 } }, nf(autoload.count))), React.createElement("div", { style: { background: 'var(--eop-bg-tab)', borderRadius: '8px', padding: '14px 20px', minWidth: '140px' } }, React.createElement("div", { style: { fontSize: '12px', color: 'var(--eop-text-muted)', marginBottom: '4px' } }, "Health"), React.createElement("div", { style: { fontSize: '22px', fontWeight: 700, color: (autoload.total_bytes || 0) > 1048576 ? 'var(--eop-danger)' : (autoload.total_bytes || 0) > 524288 ? '#d97706' : 'var(--eop-success)' } }, (autoload.total_bytes || 0) > 1048576 ? 'Needs attention' : (autoload.total_bytes || 0) > 524288 ? 'Fair' : 'Healthy'))), (autoload.total_bytes || 0) > 1048576 && React.createElement("p", { style: { color: 'var(--eop-danger)', fontSize: '13px', margin: '0 0 14px' } }, "\u26A0 Autoload size exceeds 1 MB. Consider reviewing the largest options below and disabling autoload on non-essential options."), autoload.top && autoload.top.length > 0 && React.createElement(React.Fragment, null, React.createElement("h4", { style: { margin: '0 0 8px' } }, "Autoloaded Options"), React.createElement("p", { className: "description", style: { margin: '0 0 10px', fontSize: '12px' } }, "Disable autoload for non-essential options to reduce memory usage. Core WordPress options are protected."), React.createElement("table", { className: "widefat striped", style: { maxWidth: '780px' } }, React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", null, "Option Name"), React.createElement("th", { style: { textAlign: 'right' } }, "Size"), React.createElement("th", { style: { textAlign: 'center', width: '90px' } }, "Autoload"))), React.createElement("tbody", null, autoload.top.map((row) => React.createElement("tr", { key: row.option_name, style: row.autoload === 'no' ? { opacity: 0.65 } : {} }, React.createElement("td", null, React.createElement("code", { style: { fontSize: '12px' } }, row.option_name), row.autoload === 'no' && React.createElement("span", { style: { fontSize: '10px', color: 'var(--eop-text-muted)', marginLeft: '6px' } }, "(disabled)")), React.createElement("td", { style: { textAlign: 'right', whiteSpace: 'nowrap' } }, row.size_human), React.createElement("td", { style: { textAlign: 'center' } }, row.protected
-        ? React.createElement("span", { style: { fontSize: '11px', color: 'var(--eop-text-muted)' }, title: "Core WP option — cannot be disabled" }, "\uD83D\uDD12 On")
+    return (React.createElement("div", { style: { display: "block" }, className: "eop-panel", id: "eop-panel-autoload" }, !autoload && React.createElement("button", { type: "button", className: "button button-secondary", disabled: autoloadLoading, onClick: fetchAutoload }, autoloadLoading ? 'Loading…' : 'Check Autoload Size'), autoload && React.createElement(React.Fragment, null, React.createElement("div", { style: { display: 'flex', gap: '24px', marginBottom: '18px', flexWrap: 'wrap' } }, React.createElement("div", { style: { background: 'var(--eop-bg-tab)', borderRadius: '8px', padding: '14px 20px', minWidth: '140px' } }, React.createElement("div", { style: { fontSize: '12px', color: 'var(--eop-text-muted)', marginBottom: '4px' } }, "Total Autoload Size"), React.createElement("div", { style: { fontSize: '22px', fontWeight: 700, color: (autoload.total_bytes || 0) > 1048576 ? 'var(--eop-danger)' : (autoload.total_bytes || 0) > 524288 ? '#d97706' : 'var(--eop-success)' } }, autoload.total_human)), React.createElement("div", { style: { background: 'var(--eop-bg-tab)', borderRadius: '8px', padding: '14px 20px', minWidth: '140px' } }, React.createElement("div", { style: { fontSize: '12px', color: 'var(--eop-text-muted)', marginBottom: '4px' } }, "Autoloaded Options"), React.createElement("div", { style: { fontSize: '22px', fontWeight: 700 } }, nf(autoload.count))), React.createElement("div", { style: { background: 'var(--eop-bg-tab)', borderRadius: '8px', padding: '14px 20px', minWidth: '140px' } }, React.createElement("div", { style: { fontSize: '12px', color: 'var(--eop-text-muted)', marginBottom: '4px' } }, "Health"), React.createElement("div", { style: { fontSize: '22px', fontWeight: 700, color: (autoload.total_bytes || 0) > 1048576 ? 'var(--eop-danger)' : (autoload.total_bytes || 0) > 524288 ? '#d97706' : 'var(--eop-success)' } }, (autoload.total_bytes || 0) > 1048576 ? 'Needs attention' : (autoload.total_bytes || 0) > 524288 ? 'Fair' : 'Healthy'))), (autoload.total_bytes || 0) > 1048576 && React.createElement("p", { style: { color: 'var(--eop-danger)', fontSize: '13px', margin: '0 0 14px' } }, "⚠ Autoload size is over 1 MB. Review the largest options below and turn off autoload for ones you don't need."), autoload.top && autoload.top.length > 0 && React.createElement(React.Fragment, null, React.createElement("h4", { style: { margin: '0 0 8px' } }, "Autoloaded Options"), React.createElement("p", { className: "description", style: { margin: '0 0 10px', fontSize: '12px' } }, "Turn off autoload for options you don't need to save memory. Core WordPress options are protected."), React.createElement("table", { className: "widefat striped", style: { maxWidth: '780px' } }, React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", null, "Option Name"), React.createElement("th", { style: { textAlign: 'right' } }, "Size"), React.createElement("th", { style: { textAlign: 'center', width: '90px' } }, "Autoload"))), React.createElement("tbody", null, autoload.top.map((row) => React.createElement("tr", { key: row.option_name, style: row.autoload === 'no' ? { opacity: 0.65 } : {} }, React.createElement("td", null, React.createElement("code", { style: { fontSize: '12px' } }, row.option_name), row.autoload === 'no' && React.createElement("span", { style: { fontSize: '10px', color: 'var(--eop-text-muted)', marginLeft: '6px' } }, "(disabled)")), React.createElement("td", { style: { textAlign: 'right', whiteSpace: 'nowrap' } }, row.size_human), React.createElement("td", { style: { textAlign: 'center' } }, row.protected
+        ? React.createElement("span", { style: { fontSize: '11px', color: 'var(--eop-text-muted)' }, title: "Core WordPress option — always loaded" }, "\uD83D\uDD12 On")
         : row.autoload === 'no'
-            ? React.createElement("button", { type: "button", className: "button button-small", disabled: alToggleBusy === row.option_name, style: { minWidth: '60px', fontSize: '12px', color: 'var(--eop-success)' }, onClick: () => doAutoloadToggle(row.option_name, 'yes') }, alToggleBusy === row.option_name ? '…' : 'Enable')
-            : React.createElement("button", { type: "button", className: "button button-small", disabled: alToggleBusy === row.option_name, style: { minWidth: '60px', fontSize: '12px' }, onClick: () => setAlConfirm({ name: row.option_name, action: 'no' }) }, alToggleBusy === row.option_name ? '…' : 'Disable'))))))), React.createElement("button", { type: "button", className: "button button-secondary", style: { marginTop: '12px' }, onClick: fetchAutoload }, autoloadLoading ? 'Refreshing…' : 'Refresh')), React.createElement(ConfirmModal, { open: !!alConfirm, title: "Disable Autoload", message: alConfirm ? 'Disable autoload for "' + alConfirm.name + '"? The option will still exist and can be re-enabled.' : '', confirmLabel: "Disable Autoload", onConfirm: () => alConfirm && doAutoloadToggle(alConfirm.name, 'no'), onCancel: () => setAlConfirm(null) })));
-}
-// ═══════════════════════════════════════════════════
-//  DATABASE PANEL — wrapper with sub-tabs
-// ═══════════════════════════════════════════════════
-function DatabasePanel({ settings, onChange }) {
-    const [sub, setSub] = useState(() => {
-        const stored = localStorage.getItem('easyopt_db_sub');
-        return DB_SUBTABS.find(t => t.key === stored) ? stored : 'cleanup';
-    });
-    const switchSub = (k) => { setSub(k); localStorage.setItem('easyopt_db_sub', k); };
-    return (React.createElement("div", { style: { display: "block" }, className: "eop-panel", id: "eop-panel-database" }, React.createElement(SubTabNav, { tabs: DB_SUBTABS, active: sub, onChange: switchSub }), React.createElement("div", { style: { marginTop: '20px' } }, sub === 'cleanup' && React.createElement(DbCleanupSubPanel, { settings: settings, onChange: onChange }), sub === 'autoload' && React.createElement(DbAutoloadSubPanel, { settings: settings, onChange: onChange }))));
+            ? React.createElement("button", { type: "button", className: "button button-small", disabled: alToggleBusy === row.option_name, style: { minWidth: '60px', fontSize: '12px', color: 'var(--eop-success)' }, onClick: () => doAutoloadToggle(row.option_name, 'yes') }, alToggleBusy === row.option_name ? '…' : 'Enable Autoload')
+            : React.createElement("button", { type: "button", className: "button button-small", disabled: alToggleBusy === row.option_name, style: { minWidth: '60px', fontSize: '12px' }, onClick: () => setAlConfirm({ name: row.option_name, action: 'no' }) }, alToggleBusy === row.option_name ? '…' : 'Disable Autoload'))))))), React.createElement("button", { type: "button", className: "button button-secondary", style: { marginTop: '12px' }, onClick: fetchAutoload }, autoloadLoading ? 'Refreshing…' : 'Refresh')), React.createElement(ConfirmModal, { open: !!alConfirm, title: "Disable Autoload", message: alConfirm ? 'Disable autoload for "' + alConfirm.name + '"? Nothing is deleted, and you can turn it back on.' : '', confirmLabel: "Disable Autoload", onConfirm: () => alConfirm && doAutoloadToggle(alConfirm.name, 'no'), onCancel: () => setAlConfirm(null) })));
 }
 // ═══════════════════════════════════════════════════
 //  HEARTBEAT & CRON PANEL (moved from Bloat + Database)
@@ -1922,22 +2094,22 @@ function HeartbeatCronPanel({ settings, onChange }) {
         setCronBusy(hook + hash);
         api.post('/cron/delete', { hook, hash, timestamp }).then(() => { setCronBusy(''); fetchCron(); }).catch(() => setCronBusy(''));
     };
-    return (React.createElement("div", { style: { display: "block" }, className: "eop-panel", id: "eop-panel-heartbeat" }, React.createElement("h2", null, "Heartbeat & Cron"), React.createElement("p", { className: "description", style: { marginBottom: '18px' } }, "Control WordPress Heartbeat API overhead and manage WP-Cron scheduling."), React.createElement("div", { style: { marginBottom: '24px' } }, React.createElement("h3", { style: { margin: '0 0 8px' } }, React.createElement(Icon, { id: "heart", cls: "eop-icon eop-icon--sm" }), " Control Heartbeat API"), React.createElement(Check, { name: "easyopt_bloat_heartbeat", label: "Enable Heartbeat Control", bold: true, desc: "Manage where and how often WordPress Heartbeat runs. Reduces admin AJAX overhead.", settings: settings, onChange: onChange }), React.createElement("div", { style: !hbOn ? { display: 'none' } : { marginLeft: '28px', marginTop: '8px' } }, React.createElement(SelectField, { name: "easyopt_heartbeat_location", label: "Allowed Location", settings: settings, onChange: onChange, options: [
+    return (React.createElement(CardPage, { id: "heartbeat" }, React.createElement(MasterCard, { name: "easyopt_bloat_heartbeat", title: "Enable Heartbeat Control", desc: "Control where and how often WordPress Heartbeat runs, to reduce server load.", settings: settings, onChange: onChange, on: hbOn }, React.createElement(SelectField, { name: "easyopt_heartbeat_location", label: "Heartbeat Location", settings: settings, onChange: onChange, options: [
             { value: 'everywhere', label: 'Everywhere (just control frequency)' },
-            { value: 'allow_admin', label: 'Admin pages only (disable on frontend)' },
+            { value: 'allow_admin', label: 'Admin pages only (off for site visitors)' },
             { value: 'allow_editor', label: 'Post editor only (disable elsewhere)' },
             { value: 'disabled', label: 'Disabled everywhere' },
         ] }), settings.easyopt_heartbeat_location !== 'disabled' && React.createElement(SelectField, { name: "easyopt_heartbeat_frequency", label: "Frequency", settings: settings, onChange: onChange, options: [
-            { value: '15', label: '15 seconds (default)' },
+            { value: '15', label: '15 seconds (WordPress default)' },
             { value: '30', label: '30 seconds' },
             { value: '60', label: '60 seconds (recommended)' },
             { value: '120', label: '120 seconds' },
             { value: '300', label: '300 seconds (5 minutes)' },
-        ] }))), React.createElement("div", { style: { paddingTop: '18px', borderTop: '1px solid var(--eop-border-soft)', marginBottom: '24px' } }, React.createElement("h3", { style: { margin: '0 0 6px' } }, React.createElement(Icon, { id: "refresh", cls: "eop-icon eop-icon--sm" }), " WP-Cron Frequency"), React.createElement("p", { className: "description", style: { marginBottom: '10px' } }, "WordPress fires WP-Cron on every page load. Throttle it to reduce overhead on busy sites."), React.createElement(Check, { name: "easyopt_cron_throttle", label: "Enable WP-Cron Throttle", bold: true, desc: "Limit how often WP-Cron runs. Recommended only for high-traffic sites using a system cron.", settings: settings, onChange: onChange }), React.createElement("div", { style: !Number(settings.easyopt_cron_throttle) ? { display: 'none' } : { marginLeft: '28px', marginTop: '8px' } }, React.createElement(SelectField, { name: "easyopt_cron_frequency", label: "Run WP-Cron at most every", settings: settings, onChange: onChange, options: [
+        ] })), React.createElement(MasterCard, { name: "easyopt_cron_throttle", title: "Limit WP-Cron Frequency", desc: "WP-Cron (WordPress's task scheduler) runs on page loads. This limits how often. Only for busy sites with a server cron job.", settings: settings, onChange: onChange }, React.createElement(SelectField, { name: "easyopt_cron_frequency", label: "Run WP-Cron at most every", settings: settings, onChange: onChange, options: [
             { value: '120', label: 'Every 2 minutes' },
             { value: '300', label: 'Every 5 minutes' },
             { value: '600', label: 'Every 10 minutes' },
-        ] }))), React.createElement("div", { style: { paddingTop: '18px', borderTop: '1px solid var(--eop-border-soft)' } }, React.createElement("h3", { style: { margin: '0 0 6px' } }, React.createElement(Icon, { id: "db", cls: "eop-icon eop-icon--sm" }), " Cron Events"), React.createElement("p", { className: "description", style: { marginBottom: '14px' } }, "View, run, or delete scheduled WP-Cron events."), !cronData && React.createElement("button", { type: "button", className: "button button-secondary", disabled: cronLoading, onClick: fetchCron }, cronLoading ? 'Loading…' : 'View Cron Events'), cronData && React.createElement(React.Fragment, null, React.createElement("div", { style: { display: 'flex', gap: '24px', marginBottom: '18px', flexWrap: 'wrap' } }, React.createElement("div", { style: { background: 'var(--eop-bg-tab)', borderRadius: '8px', padding: '14px 20px', minWidth: '140px' } }, React.createElement("div", { style: { fontSize: '12px', color: 'var(--eop-text-muted)', marginBottom: '4px' } }, "Total Events"), React.createElement("div", { style: { fontSize: '22px', fontWeight: 700 } }, nf(cronData.total))), React.createElement("div", { style: { background: 'var(--eop-bg-tab)', borderRadius: '8px', padding: '14px 20px', minWidth: '140px' } }, React.createElement("div", { style: { fontSize: '12px', color: 'var(--eop-text-muted)', marginBottom: '4px' } }, "WP-Cron"), React.createElement("div", { style: { fontSize: '22px', fontWeight: 700, color: cronData.wp_cron ? 'var(--eop-success)' : '#d97706' } }, cronData.wp_cron ? 'Active' : 'Disabled'))), !cronData.wp_cron && React.createElement("p", { style: { color: '#d97706', fontSize: '13px', margin: '0 0 14px' } }, "DISABLE_WP_CRON is defined. Make sure a system cron is hitting wp-cron.php.", cronData.last_cron_ago ? ' Last background run: ' + cronData.last_cron_ago + ' ago.' : ' No background run has been observed yet — your system cron may not be reaching wp-cron.php.'), cronData.events && cronData.events.length > 0 && React.createElement("div", { style: { maxHeight: '500px', overflowY: 'auto' } }, React.createElement("table", { className: "widefat striped", style: { maxWidth: '900px' } }, React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", null, "Hook"), React.createElement("th", null, "Schedule"), React.createElement("th", null, "Next Run"), React.createElement("th", { style: { textAlign: 'center', width: '140px' } }, "Actions"))), React.createElement("tbody", null, cronData.events.map((ev, i) => React.createElement("tr", { key: ev.hook + ev.hash + i }, React.createElement("td", null, React.createElement("code", { style: { fontSize: '11px', wordBreak: 'break-all' } }, ev.hook)), React.createElement("td", { style: { whiteSpace: 'nowrap', fontSize: '12px' } }, ev.interval), React.createElement("td", { style: { whiteSpace: 'nowrap', fontSize: '12px', color: ev.overdue ? 'var(--eop-danger)' : undefined } }, ev.next_run, ev.overdue ? ' (overdue)' : ''), React.createElement("td", { style: { textAlign: 'center' } }, React.createElement("button", { type: "button", className: "button button-small", disabled: cronBusy === ev.hook + ev.hash, style: { fontSize: '11px', marginRight: '4px' }, onClick: () => cronRun(ev.hook, ev.hash) }, cronBusy === ev.hook + ev.hash ? '…' : 'Run'), React.createElement("button", { type: "button", className: "button button-small", disabled: cronBusy === ev.hook + ev.hash, style: { fontSize: '11px', color: 'var(--eop-danger)' }, onClick: () => cronDelete(ev.hook, ev.hash, ev.timestamp) }, cronBusy === ev.hook + ev.hash ? '…' : 'Delete'))))))), React.createElement("button", { type: "button", className: "button button-secondary", style: { marginTop: '12px' }, onClick: fetchCron }, cronLoading ? 'Refreshing…' : 'Refresh')))));
+        ] })), React.createElement(Card, { title: "Cron Events", desc: "See, run or delete WordPress scheduled tasks." }, !cronData && React.createElement("button", { type: "button", className: "button button-secondary", disabled: cronLoading, onClick: fetchCron }, cronLoading ? 'Loading…' : 'View Cron Events'), cronData && React.createElement(React.Fragment, null, React.createElement("div", { style: { display: 'flex', gap: '24px', marginBottom: '18px', flexWrap: 'wrap' } }, React.createElement("div", { style: { background: 'var(--eop-bg-tab)', borderRadius: '8px', padding: '14px 20px', minWidth: '140px' } }, React.createElement("div", { style: { fontSize: '12px', color: 'var(--eop-text-muted)', marginBottom: '4px' } }, "Total Events"), React.createElement("div", { style: { fontSize: '22px', fontWeight: 700 } }, nf(cronData.total))), React.createElement("div", { style: { background: 'var(--eop-bg-tab)', borderRadius: '8px', padding: '14px 20px', minWidth: '140px' } }, React.createElement("div", { style: { fontSize: '12px', color: 'var(--eop-text-muted)', marginBottom: '4px' } }, "WP-Cron"), React.createElement("div", { style: { fontSize: '22px', fontWeight: 700, color: cronData.wp_cron ? 'var(--eop-success)' : '#d97706' } }, cronData.wp_cron ? 'Active' : 'Disabled'))), !cronData.wp_cron && React.createElement("p", { style: { color: '#d97706', fontSize: '13px', margin: '0 0 14px' } }, "DISABLE_WP_CRON is set in wp-config.php, so a server cron job must run wp-cron.php.", cronData.last_cron_ago ? ' Last run: ' + cronData.last_cron_ago + ' ago.' : ' No run seen yet — your server cron may not be reaching wp-cron.php. Ask your host.'), cronData.events && cronData.events.length > 0 && React.createElement("div", { style: { maxHeight: '500px', overflowY: 'auto' } }, React.createElement("table", { className: "widefat striped", style: { maxWidth: '900px' } }, React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", null, "Hook"), React.createElement("th", null, "Schedule"), React.createElement("th", null, "Next Run"), React.createElement("th", { style: { textAlign: 'center', width: '140px' } }, "Actions"))), React.createElement("tbody", null, cronData.events.map((ev, i) => React.createElement("tr", { key: ev.hook + ev.hash + i }, React.createElement("td", null, React.createElement("code", { style: { fontSize: '11px', wordBreak: 'break-all' } }, ev.hook)), React.createElement("td", { style: { whiteSpace: 'nowrap', fontSize: '12px' } }, ev.interval), React.createElement("td", { style: { whiteSpace: 'nowrap', fontSize: '12px', color: ev.overdue ? 'var(--eop-danger)' : undefined } }, ev.next_run, ev.overdue ? ' (overdue)' : ''), React.createElement("td", { style: { textAlign: 'center' } }, React.createElement("button", { type: "button", className: "button button-small", disabled: cronBusy === ev.hook + ev.hash, style: { fontSize: '11px', marginRight: '4px' }, onClick: () => cronRun(ev.hook, ev.hash) }, cronBusy === ev.hook + ev.hash ? '…' : 'Run'), React.createElement("button", { type: "button", className: "button button-small", disabled: cronBusy === ev.hook + ev.hash, style: { fontSize: '11px', color: 'var(--eop-danger)' }, onClick: () => cronDelete(ev.hook, ev.hash, ev.timestamp) }, cronBusy === ev.hook + ev.hash ? '…' : 'Delete'))))))), React.createElement("button", { type: "button", className: "button button-secondary", style: { marginTop: '12px' }, onClick: fetchCron }, cronLoading ? 'Refreshing…' : 'Refresh')))));
 }
 // ═══════════════════════════════════════════════════
 //  ACCESSIBILITY & SEO PANEL
@@ -1955,15 +2127,187 @@ function AccessibilityPanel({ settings, onChange }) {
         ['easyopt_a11y_skip_link', 'Skip links are not focusable'],
         ['easyopt_a11y_main_landmark', 'Document does not have a main landmark'],
     ];
-    return (React.createElement("div", { style: { display: "block" }, className: "eop-panel", id: "eop-panel-accessibility" }, React.createElement("h2", { className: "eop-section-h" }, "Accessibility"), React.createElement("p", { className: "description", style: { marginBottom: '18px' } }, "Fix common Lighthouse accessibility audits. Enable only the options relevant to your site."), a11y.map(([key, label]) => React.createElement(Check, { key: key, name: key, label: label, settings: settings, onChange: onChange })), React.createElement("h2", { className: "eop-section-h", style: { marginTop: '34px' } }, "SEO"), React.createElement("p", { className: "description", style: { marginBottom: '18px' } }, "Fix common Lighthouse SEO audits."), React.createElement(Check, { name: "easyopt_seo_crawlable_links", label: "Make non-crawlable links crawlable", settings: settings, onChange: onChange, desc: 'Any <a> with missing/empty/javascript:void(0) href is rewritten to "#".' }), React.createElement(Check, { name: "easyopt_seo_image_alts", label: "Add missing image alt attributes", settings: settings, onChange: onChange, desc: "Fills missing alt from image title or filename." })));
+    return (React.createElement(CardPage, { id: "lighthouse" }, React.createElement(Card, { title: "Accessibility", desc: "Fix common Lighthouse accessibility audits. Enable only the options relevant to your site." }, a11y.map(([key, label]) => React.createElement(Check, { key: key, name: key, label: label, bold: true, settings: settings, onChange: onChange }))), React.createElement(Card, { title: "SEO", desc: "Fix common Lighthouse SEO audits." }, React.createElement(Check, { name: "easyopt_seo_crawlable_links", label: "Make non-crawlable links crawlable", bold: true, settings: settings, onChange: onChange, desc: 'Any <a> with missing/empty/javascript:void(0) href is rewritten to "#".' }), React.createElement(Check, { name: "easyopt_seo_image_alts", label: "Add missing image alt attributes", bold: true, settings: settings, onChange: onChange, desc: "Fills missing alt from image title or filename." }))));
 }
 // ═══════════════════════════════════════════════════
 //  BACKEND ANALYZER PANEL (2.4.0)
 // ═══════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════
+//  TOOLS — URL INSPECTOR (2.8.0)
+// ═══════════════════════════════════════════════════
+// Everything the plugin knows about one URL, on one screen, plus "Test this
+// page": the page loads in a frame as a visitor sees it, one interaction is
+// simulated so delayed scripts run, and the JavaScript errors come back with
+// exclusions worth trying. Suggestions are only ever applied by a click.
+const eopAgo = (secs) => {
+    const s = Math.max(0, Number(secs) || 0);
+    if (s < 90)
+        return 'just now';
+    if (s < 5400)
+        return Math.round(s / 60) + ' min ago';
+    if (s < 129600)
+        return Math.round(s / 3600) + ' h ago';
+    return Math.round(s / 86400) + ' days ago';
+};
+const PRELOAD_STATUS = {
+    cached: 'Warmed', pending: 'Waiting in the queue', redirected: 'Redirects',
+    uncacheable: 'Not cacheable', failed: 'Failed',
+};
+function InspectorRow({ label, children, tone }) {
+    const dot = tone === 'ok' ? 'var(--eop-success)' : tone === 'warn' ? 'var(--eop-warn, #f59e0b)' : 'var(--eop-border, #c3c4c7)';
+    return React.createElement("div", { className: "eop-inspect-row" }, React.createElement("div", { style: { fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' } }, React.createElement("span", { style: { width: 7, height: 7, borderRadius: '50%', background: dot, flexShrink: 0 } }), label), React.createElement("div", null, children));
+}
+// Page builders switch behaviour by viewport, so "Test this page" loads the page
+// at these widths rather than at the width of the admin panel.
+const TEST_PASSES = [
+    { key: 'desktop', w: 1366, h: 768 },
+    { key: 'mobile', w: 390, h: 844 },
+];
+const TEST_FRAME_H = 360;
+function UrlInspectorPanel({ settings, saveOne, showToast: toast }) {
+    const home = CFG().homeUrl || CFG().siteUrl || '';
+    const [url, setUrl] = useState(home);
+    const [data, setData] = useState(null);
+    const [busy, setBusy] = useState(false);
+    const [err, setErr] = useState('');
+    const [testing, setTesting] = useState(false);
+    const [test, setTest] = useState(null);
+    const [frame, setFrame] = useState(null);
+    const inspect = (target = '') => {
+        const u = (target || url || '').trim();
+        if (!u)
+            return;
+        setBusy(true);
+        setErr('');
+        api.get('/debug/url-inspect?url=' + encodeURIComponent(u)).then((r) => {
+            if (!r || r.code) {
+                setErr((r && r.message) || NO_SERVER_MSG);
+                setData(null);
+                return;
+            }
+            setData(r);
+            setTest(r.test || null);
+        }).finally(() => setBusy(false));
+    };
+    useEffect(() => { inspect(home); }, []);
+    // One test at a time, one frame per width; each frame's listener and safety
+    // timeout end together. An error seen at both widths is listed once.
+    const runTest = () => {
+        const u = (data && data.url) || url;
+        let origin = '';
+        try {
+            origin = new URL(u).origin;
+        }
+        catch (e) {
+            return;
+        }
+        setTesting(true);
+        const src = u.split('#')[0] + (u.indexOf('?') === -1 ? '?' : '&') + 'eopview=1&eoptest=' + encodeURIComponent(CFG().pageTestNonce || '');
+        const seen = {};
+        const errors = [];
+        let delayed = 0;
+        const runPass = (i) => {
+            if (i >= TEST_PASSES.length) {
+                api.post('/debug/page-test', { url: u, errors, delayed })
+                    .then((r) => { if (r && !r.code)
+                    setTest(r); })
+                    .finally(() => setTesting(false));
+                return;
+            }
+            const pass = TEST_PASSES[i];
+            let done = false;
+            const finish = (payload) => {
+                if (done)
+                    return;
+                done = true;
+                window.removeEventListener('message', onMsg);
+                clearTimeout(timer);
+                setFrame(null);
+                if (!payload) {
+                    setTesting(false);
+                    toast("The page didn't report back. It may refuse to be shown in a frame — open it in a new tab with the Debug Issues tools instead.", 'error');
+                    return;
+                }
+                (payload.errors || []).forEach((e) => {
+                    const k = [e.type, e.message, e.src, e.line].join('|');
+                    if (!seen[k]) {
+                        seen[k] = Object.assign({}, e, { viewports: [] });
+                        errors.push(seen[k]);
+                    }
+                    if (seen[k].viewports.indexOf(pass.key) === -1)
+                        seen[k].viewports.push(pass.key);
+                });
+                delayed = Math.max(delayed, payload.delayed || 0);
+                runPass(i + 1);
+            };
+            const onMsg = (e) => {
+                if (e.origin === origin && e.data && e.data.easyoptPageTest) {
+                    finish(e.data);
+                }
+            };
+            const timer = setTimeout(() => finish(null), 35000);
+            window.addEventListener('message', onMsg);
+            setFrame({ key: pass.key, src, w: pass.w, h: pass.h });
+        };
+        runPass(0);
+    };
+    const testErrors = test ? test.errors.filter((e) => e.type !== 'resource') : [];
+    const testFailed = test ? test.errors.filter((e) => e.type === 'resource') : [];
+    const apply = (s) => {
+        let value = s.value;
+        if (s.kind === 'line' || s.kind === 'oneclick') {
+            const lines = String(settings[s.setting] || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+            if (lines.includes(s.value)) {
+                toast('Already there.', 'ok');
+                return;
+            }
+            value = lines.concat(s.value).join('\n');
+        }
+        saveOne(s.setting, value);
+        toast('Saved. Run the test again to check.', 'ok');
+    };
+    const c = data && data.cache;
+    const cacheRow = c && (() => {
+        const skip = (data.skips || []).find((s) => s.feature === 'Page cache');
+        if (Number(c.enabled) !== 1)
+            return React.createElement(InspectorRow, { label: "Page cache" }, "Off — every visit is rendered fresh.");
+        if (skip)
+            return React.createElement(InspectorRow, { label: "Page cache", tone: "warn" }, "Never cached — matches ", React.createElement("code", null, skip.rule), ".");
+        const dev = (d, name) => d && d.cached ? name + ': cached ' + eopAgo(d.age) : name + ': not cached yet';
+        const parts = [dev(c.desktop, 'Desktop')];
+        if (Number(c.separate_mobile) === 1)
+            parts.push(dev(c.mobile, 'Mobile'));
+        const hit = c.desktop && c.desktop.cached;
+        return React.createElement(InspectorRow, { label: "Page cache", tone: hit ? 'ok' : 'warn' }, parts.join(' · '));
+    })();
+    const p = data && data.preload;
+    const u = data && data.used_css;
+    const l = data && data.lcp;
+    const j = data && data.js;
+    return React.createElement("div", { style: { display: 'block' }, className: "eop-panel", id: "eop-panel-inspector" }, React.createElement("h2", { className: "eop-section-h" }, "URL Inspector"), React.createElement("p", { className: "description", style: { marginBottom: '14px' } }, "See what Easy Optimizer does to one page: whether it's cached, its Used CSS, its LCP image, which features skip it — and test it for JavaScript errors."), React.createElement("div", { style: { display: 'flex', gap: '8px', maxWidth: '640px' } }, React.createElement("input", { type: "url", placeholder: home, value: url, onChange: (e) => setUrl(e.target.value), onKeyDown: (e) => { if (e.key === 'Enter')
+            inspect(); }, style: { flex: 1 } }), React.createElement("button", { type: "button", className: "button button-primary", disabled: busy, onClick: () => inspect() }, busy ? 'Inspecting…' : 'Inspect')), err && React.createElement("p", { style: { color: 'var(--eop-danger)', marginTop: '10px' } }, err), data && React.createElement("div", { className: "eop-card", style: { marginTop: '16px' } }, cacheRow, React.createElement(InspectorRow, { label: "Preload", tone: p.status === 'cached' ? 'ok' : (p.status === 'failed' || p.status === 'uncacheable' ? 'warn' : '') }, Number(p.enabled) !== 1 ? 'Off.'
+        : p.status ? (PRELOAD_STATUS[p.status] || p.status) + (p.code ? ' (HTTP ' + p.code + ')' : '') + (p.note ? ' — ' + p.note : '') + (p.updated ? ' · ' + p.updated + ' UTC' : '')
+            : 'Not in the preload list yet.'), React.createElement(InspectorRow, { label: "Remove Unused CSS", tone: Number(u.enabled) === 1 && u.files && u.files.desktop && u.files.desktop.exists ? 'ok' : '' }, Number(u.enabled) !== 1 ? 'Off.'
+        : !u.context ? 'Archive pages share a Used CSS file per type; it is chosen when the page renders.'
+            : React.createElement(React.Fragment, null, "Context ", React.createElement("code", null, u.context), ". ", Object.keys(u.files || {}).map((k) => {
+                const f = u.files[k];
+                const txt = !f.exists ? (f.failed ? 'last build failed — original CSS is served' : 'not built yet')
+                    : 'built ' + (f.built ? eopAgo(Math.floor(Date.now() / 1000) - f.built) : '') + ', ' + fmtBytes(f.bytes) + (f.sheets ? ', from ' + f.sheets + ' stylesheets' : '');
+                return React.createElement("div", { key: k }, (k === 'mobile' ? 'Mobile: ' : 'Desktop: ') + txt);
+            }))), React.createElement(InspectorRow, { label: "Preload LCP", tone: Number(l.enabled) === 1 && l.rows.length ? 'ok' : '' }, Number(l.enabled) !== 1 ? 'Off.'
+        : l.rows.length ? l.rows.map((r, i) => React.createElement("div", { key: i }, (r.viewport || 'any') + ': <' + (r.tag || 'img') + '> ', r.image ? React.createElement("code", { style: { wordBreak: 'break-all' } }, r.image) : 'no image'))
+            : 'Not measured yet — it is measured on the first real visits.'), React.createElement(InspectorRow, { label: "JavaScript" }, [
+        'Minify ' + (Number(j.minify) ? 'on' : 'off'),
+        'Delay ' + (Number(j.delay) ? (Number(j.delay_external) ? 'on, external only' : 'on') : 'off'),
+        'Defer ' + (Number(j.defer) ? 'on' : 'off'),
+    ].join(' · ') + (j.oneclick && j.oneclick.length ? '. One-click exclusions: ' + j.oneclick.join(', ') + '.' : '')), React.createElement(InspectorRow, { label: "Skipped by", tone: (data.skips || []).length ? 'warn' : 'ok' }, (data.skips || []).length
+        ? (data.skips || []).map((s, i) => React.createElement("div", { key: i }, s.feature + ' — ', React.createElement("code", null, s.rule)))
+        : 'Nothing — every feature that is on runs on this page.')), data && React.createElement(React.Fragment, null, React.createElement("h2", { className: "eop-section-h", style: { marginTop: '26px' } }, "Test this page"), React.createElement("p", { className: "description", style: { margin: '0 0 10px' } }, "Loads the page below at desktop width, then at phone width, as a logged-out visitor gets it, scrolls once so delayed scripts and styles run, and lists any JavaScript errors. Nothing is cached and your visitors are not affected."), React.createElement("button", { type: "button", className: "button", disabled: testing, onClick: runTest }, testing ? 'Testing… (up to a minute)' : 'Test this page'), frame && React.createElement("div", { style: { width: Math.round(frame.w * TEST_FRAME_H / frame.h) + 'px', maxWidth: '100%', height: TEST_FRAME_H + 'px', overflow: 'hidden', marginTop: '12px', border: '1px solid var(--eop-border-soft)', borderRadius: '8px', background: '#fff' } }, React.createElement("iframe", { key: frame.key, src: frame.src, title: "Page test", style: { display: 'block', border: 0, width: frame.w + 'px', height: frame.h + 'px', transform: 'scale(' + (TEST_FRAME_H / frame.h) + ')', transformOrigin: 'top left' } })), !testing && test && React.createElement("div", { className: "eop-card", style: { marginTop: '12px' } }, React.createElement("p", { style: { marginTop: 0 } }, React.createElement("strong", null, testErrors.length ? testErrors.length + (testErrors.length === 1 ? ' error' : ' errors') : 'No JavaScript errors'), ' · tested ' + eopAgo(Math.floor(Date.now() / 1000) - test.time), test.delayed ? ' · ' + test.delayed + ' delayed scripts still waiting at the end' : ''), testErrors.map((e, i) => React.createElement("div", { key: i, style: { fontFamily: 'monospace', fontSize: '12px', padding: '6px 0', borderTop: '1px solid var(--eop-border-soft)', wordBreak: 'break-all' } }, React.createElement("strong", null, e.type === 'console' ? 'console.error' : 'Error'), (e.viewports && e.viewports.length === 1 ? (e.viewports[0] === 'mobile' ? ' (phone only)' : ' (desktop only)') : ''), ' ', e.message, e.src ? ' — ' + e.src + (e.line ? ':' + e.line : '') : '')), testFailed.length > 0 && React.createElement("div", { className: "description", style: { marginTop: '12px' } }, "These files did not download. That isn't a JavaScript error, and excluding them from Delay would not help:", testFailed.map((e, i) => React.createElement("div", { key: i, style: { fontFamily: 'monospace', fontSize: '12px', paddingTop: '4px', wordBreak: 'break-all' } }, e.src))), (test.suggestions || []).length > 0 && React.createElement("div", { style: { marginTop: '12px' } }, React.createElement("strong", null, "Worth trying"), test.suggestions.map((s, i) => React.createElement("div", { key: i, style: { display: 'flex', alignItems: 'center', gap: '10px', marginTop: '6px' } }, React.createElement("span", { style: { flex: 1 } }, s.label), React.createElement("button", { type: "button", className: "button button-small", onClick: () => apply(s) }, "Apply")))))));
+}
 function BackendPanel({ settings, onChange, saveOne, showToast: toast }) {
     const SUBS = [
-        { key: 'callbacks', label: 'Slow Callbacks', icon: 'plug' },
-        { key: 'queries', label: 'Slow Database Queries', icon: 'database' },
+        { key: 'callbacks', label: 'Slow Callbacks', icon: 'code' },
+        { key: 'queries', label: 'Slow Database Queries', icon: 'db' },
     ];
     const [sub, setSub] = useState(localStorage.getItem('easyopt_backend_sub') || 'callbacks');
     const pickSub = (k) => { setSub(k); localStorage.setItem('easyopt_backend_sub', k); };
@@ -2096,14 +2440,14 @@ function SettingsPanel({ settings, onChange, showToast: toast }) {
         api.post('/tracking', { enabled: next }).then((r) => {
             if (!r || !r.ok) {
                 setTracking(!next);
-                toast('Could not update', 'error');
+                toast('Couldn\'t save. Try again.', 'error');
             }
             else {
                 // This toggle saves itself instantly (consent must apply
                 // immediately) — confirm it, since no Save bar will appear.
                 toast(next ? 'Saved — diagnostics sharing enabled' : 'Saved — diagnostics sharing disabled', 'ok');
             }
-        }).catch(() => { setTracking(!next); toast('Could not update', 'error'); });
+        }).catch(() => { setTracking(!next); toast('Couldn\'t save. Try again.', 'error'); });
     };
     // (2.5.7) Keys holding live third-party credentials. NEVER written to an
     // export file: these travel to support inboxes, forum posts, shared drives
@@ -2115,12 +2459,17 @@ function SettingsPanel({ settings, onChange, showToast: toast }) {
     // live in their own option but are still declared in the registry, so the
     // settings payload carries them as empty strings. Exporting those empties
     // and importing them back deleted the real credentials server-side.
-    const SECRET_KEYS = [
+    // (2.8.0) The server sends the list (secret_setting_keys()), so the two
+    // can no longer drift — they had: the PSI key and the legacy FluxCDN
+    // licence were on neither. The literal is only the fallback.
+    const SECRET_KEYS = (Array.isArray(CFG().secretKeys) && CFG().secretKeys.length) ? CFG().secretKeys : [
         'easyopt_cf_api_token',
         'easyopt_oc_password',
         'easyopt_oc_username',
         'easyopt_fluxcdn_api_key',
+        'easyopt_fluxcdn_license_key',
         'easyopt_fluxcdn_activation_id',
+        'easyopt_psi_api_key',
         'easyopt_cloud_key',
         'easyopt_cloud_salt',
         'easyopt_cloud_token',
@@ -2150,7 +2499,7 @@ function SettingsPanel({ settings, onChange, showToast: toast }) {
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
         toast(redacted
-            ? `Settings exported — ${redacted} credential${redacted > 1 ? 's' : ''} left out for safety. Re-enter them on the destination site.`
+            ? `Settings exported — ${redacted} saved key${redacted > 1 ? 's' : ''} left out for safety. Enter them again on the new site.`
             : 'Settings exported', 'ok');
     };
     const importSettings = (e) => {
@@ -2171,13 +2520,13 @@ function SettingsPanel({ settings, onChange, showToast: toast }) {
                         window.location.reload();
                     }
                     else {
-                        setImportMsg(r?.message || 'Import failed.');
+                        setImportMsg(r?.message || 'Import failed. Nothing changed.');
                         setTimeout(() => setImportMsg(''), 4000);
                     }
-                }).catch(() => { setImportMsg('Import failed.'); setTimeout(() => setImportMsg(''), 4000); });
+                }).catch(() => { setImportMsg('Import failed. Nothing changed.'); setTimeout(() => setImportMsg(''), 4000); });
             }
             catch {
-                setImportMsg('Invalid JSON file.');
+                setImportMsg('Not an Easy Optimizer export file.');
                 setTimeout(() => setImportMsg(''), 4000);
             }
         };
@@ -2185,7 +2534,7 @@ function SettingsPanel({ settings, onChange, showToast: toast }) {
         // Reset input so re-importing the same file works
         e.target.value = '';
     };
-    return (React.createElement("div", { style: { display: "block" }, className: "eop-panel", id: "eop-panel-settings" }, React.createElement("h2", { style: { marginBottom: '20px' } }, "Settings"), React.createElement("div", { className: "eop-settings-card" }, React.createElement("h3", { style: { margin: '0 0 8px' } }, "Google PageSpeed"), React.createElement("p", { className: "description", style: { marginBottom: '14px' } }, "The Dashboard's speed test compares your site's Google PageSpeed score with and without Easy Optimizer's improvements."), React.createElement("div", { style: { marginBottom: '8px' } }, React.createElement("label", { style: { display: 'block', fontWeight: 600, marginBottom: '6px' } }, "Google API key ", React.createElement("span", { style: { fontWeight: 400, color: 'var(--eop-text-soft, #6b7280)' } }, "(optional)")), React.createElement("input", { type: "text", style: { width: '100%', maxWidth: '460px', display: 'block' }, placeholder: "Paste your key here for unlimited tests", value: settings['easyopt_psi_api_key'] || '', onChange: (e) => onChange('easyopt_psi_api_key', e.target.value) }), React.createElement("p", { className: "description", style: { marginTop: '6px' } }, "You can run 3 free speed tests per day without any setup. Want unlimited tests? Get a free key from Google: visit console.cloud.google.com, enable \"PageSpeed Insights API\", create an API key, and paste it above. Takes about 2 minutes."))), React.createElement("div", { className: "eop-settings-card" }, React.createElement("h3", { style: { margin: '0 0 8px' } }, "Uninstall Behavior"), React.createElement(Check, { name: "easyopt_delete_on_uninstall", label: "Delete all plugin data on uninstall", bold: true, settings: settings, onChange: onChange, desc: "When enabled, deleting the plugin from WordPress will remove all settings, custom tables, cache files, and the caching helper file Easy Optimizer installed (advanced-cache.php). Disable this if you plan to reinstall later and want to keep your configuration." })), React.createElement("div", { style: { marginBottom: '28px', paddingTop: '18px', borderTop: '1px solid var(--eop-border-soft)' } }, React.createElement("h3", { style: { margin: '0 0 8px' } }, "Debug Logging"), React.createElement("p", { className: "description", style: { marginBottom: '14px' } }, "Controls what Easy Optimizer records to its Debug Log (open it from the button in the top bar). Logging only happens on rare events, so it has no measurable performance cost."), React.createElement(Check, { name: "easyopt_log_errors", label: "Log Errors", bold: true, settings: settings, onChange: onChange, desc: "Records failures such as cache-write failures, background-task failures, and .htaccess write failures. Recommended — leave enabled." }), React.createElement(Check, { name: "easyopt_log_warnings", label: "Log Warnings", bold: true, settings: settings, onChange: onChange, desc: "Records early-warning signals such as excessive cache purges, a stalled or looping preload queue, and an unconfirmed Apache serving mode. Useful for diagnosing cache/preload issues." }), React.createElement("div", { style: { marginTop: '18px', padding: '12px 14px', background: 'var(--eop-bg-alt)', border: '1px solid var(--eop-border-soft)', borderRadius: 'var(--eop-radius-sm)' } }, React.createElement("strong", { style: { display: 'block', marginBottom: '6px' } }, "Query-string debug switches"), React.createElement("p", { className: "description", style: { margin: '0 0 8px' } }, "Add one of these parameters to any front-end URL to disable a single feature for that one request only — without changing any settings. Handy for checking whether a feature is causing an issue. The switched request is never served from or written to the page cache, so you always see fresh output."), React.createElement("ul", { style: { margin: '0', paddingLeft: '18px', fontSize: '13px', lineHeight: 1.7 } }, React.createElement("li", null, React.createElement("code", null, "?nooptimize"), " — disable ", React.createElement("em", null, "all"), " optimizations for this request"), React.createElement("li", null, React.createElement("code", null, "?nocache"), " — bypass the page cache for this request"), React.createElement("li", null, React.createElement("code", null, "?nodelayjs"), " — don't delay/defer JavaScript for this request"), React.createElement("li", null, React.createElement("code", null, "?norucss"), " — don't apply Remove Unused CSS for this request")), React.createElement("p", { className: "description", style: { margin: '8px 0 0', fontSize: '12px' } }, "Example: ", React.createElement("code", null, "https://example.com/?nodelayjs"), " (use ", React.createElement("code", null, "&"), " instead of ", React.createElement("code", null, "?"), " if the URL already has a query string, e.g. ", React.createElement("code", null, "?ver=2&nooptimize"), ")."))), React.createElement("div", { style: { paddingTop: '18px', borderTop: '1px solid var(--eop-border-soft)' } }, React.createElement("h3", { style: { margin: '0 0 8px' } }, "Import / Export Settings"), React.createElement("p", { className: "description", style: { marginBottom: '14px' } }, "Transfer your Easy Optimizer configuration between sites or create a backup before making changes."), React.createElement("div", { style: { display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' } }, React.createElement("button", { type: "button", className: "button button-secondary", onClick: exportSettings }, React.createElement(Icon, { id: "download", cls: "eop-icon eop-icon--sm" }), " Export Settings"), React.createElement("button", { type: "button", className: "button button-secondary", onClick: () => fileRef.current?.click() }, React.createElement(Icon, { id: "upload", cls: "eop-icon eop-icon--sm" }), " Import Settings"), React.createElement("input", { ref: fileRef, type: "file", accept: ".json", style: { display: 'none' }, onChange: importSettings }), importMsg && React.createElement("span", { style: { fontSize: '13px', color: importMsg.includes('fail') || importMsg.includes('Invalid') ? 'var(--eop-danger)' : 'var(--eop-text-muted)' } }, importMsg)), React.createElement("p", { className: "description", style: { marginTop: '10px', fontSize: '12px' } }, "Importing will overwrite all current settings and reload the page.")), React.createElement("div", { style: { marginTop: '28px', paddingTop: '18px', borderTop: '1px solid var(--eop-border-soft)' } }, React.createElement("label", null, React.createElement("input", { type: "checkbox", id: "easyopt_help_improve", checked: tracking, onChange: toggleTracking }), " ", React.createElement("strong", null, "Help improve Easy Optimizer")), React.createElement("p", { className: "description" }, "Allow Easy Optimizer to collect non-sensitive diagnostic data. This helps us improve compatibility and deliver new features faster. Saves instantly — no need to press Save."))));
+    return (React.createElement(CardPage, { id: "settings" }, React.createElement(Card, { title: "Import / Export Settings", desc: "Transfer your Easy Optimizer configuration between sites or create a backup before making changes." }, React.createElement(CardActions, null, React.createElement("button", { type: "button", className: "button button-secondary", onClick: exportSettings }, React.createElement(Icon, { id: "download", cls: "eop-icon eop-icon--sm" }), " Export Settings"), React.createElement("button", { type: "button", className: "button button-secondary", onClick: () => fileRef.current?.click() }, React.createElement(Icon, { id: "upload", cls: "eop-icon eop-icon--sm" }), " Import Settings"), React.createElement("input", { ref: fileRef, type: "file", accept: ".json", style: { display: 'none' }, onChange: importSettings }), importMsg && React.createElement("span", { style: { fontSize: '13px', color: importMsg.includes('fail') || importMsg.includes('Invalid') ? 'var(--eop-danger)' : 'var(--eop-text-muted)' } }, importMsg)), React.createElement("p", { className: "description" }, "Importing will overwrite all current settings and reload the page.")), React.createElement(Card, { title: "Google PageSpeed", desc: "The Dashboard's speed test compares your site's Google PageSpeed score with and without Easy Optimizer's improvements." }, React.createElement("div", { className: "easyopt-row" }, React.createElement("label", { htmlFor: "easyopt_psi_api_key" }, "Google API key ", React.createElement("span", { style: { fontWeight: 400, color: 'var(--eop-text-soft, #6b7280)' } }, "(optional)")), React.createElement(SecretInput, { name: "easyopt_psi_api_key", type: "text", settings: settings, onChange: onChange, placeholder: "Paste your key here for unlimited tests" }), React.createElement("p", { className: "description" }, "You get 3 free speed tests a day with no setup. For unlimited tests, get a free Google key: at console.cloud.google.com, create a project, enable “PageSpeed Insights API”, create an API key and paste it above. About 2 minutes."))), React.createElement(Card, { title: "Debug Logging", desc: "Controls what Easy Optimizer records to its Debug Log (open it from the button in the top bar). Logging only happens on rare events, so it has no measurable performance cost." }, React.createElement(Check, { name: "easyopt_log_errors", label: "Log Errors", bold: true, settings: settings, onChange: onChange, desc: "Records failures such as cache-write failures, background-task failures, and .htaccess write failures. Recommended — leave enabled." }), React.createElement(Check, { name: "easyopt_log_warnings", label: "Log Warnings", bold: true, settings: settings, onChange: onChange, desc: "Records early warnings, like too many cache purges, a stuck preload queue, or .htaccess mode not confirmed. Useful when cache or preload acts up." }), React.createElement("div", { style: { marginTop: '18px', padding: '12px 14px', background: 'var(--eop-bg-alt)', border: '1px solid var(--eop-border-soft)', borderRadius: 'var(--eop-radius-sm)' } }, React.createElement("strong", { style: { display: 'block', marginBottom: '6px' } }, "URL debug switches"), React.createElement("p", { className: "description", style: { margin: '0 0 8px' } }, "Add one of these to the end of any page URL to turn off one feature for that single visit — your settings don't change. Handy for finding which feature causes a problem. That visit never uses or fills the page cache, so you always see a fresh page."), React.createElement("ul", { style: { margin: '0', paddingLeft: '18px', fontSize: '13px', lineHeight: 1.7 } }, React.createElement("li", null, React.createElement("code", null, "?nooptimize"), " — disable ", React.createElement("em", null, "all"), " optimizations for this visit"), React.createElement("li", null, React.createElement("code", null, "?nocache"), " — skip the page cache for this visit"), React.createElement("li", null, React.createElement("code", null, "?nodelayjs"), " — don't delay/defer JavaScript for this visit"), React.createElement("li", null, React.createElement("code", null, "?norucss"), " — don't apply Remove Unused CSS for this visit")), React.createElement("p", { className: "description", style: { margin: '8px 0 0', fontSize: '12px' } }, "Example: ", React.createElement("code", null, "https://example.com/?nodelayjs"), " (use ", React.createElement("code", null, "&"), " instead of ", React.createElement("code", null, "?"), " if the URL already has a query string, e.g. ", React.createElement("code", null, "?ver=2&nooptimize"), ")."))), React.createElement(Card, { title: "Uninstall Behavior" }, React.createElement(Check, { name: "easyopt_delete_on_uninstall", label: "Delete plugin data on uninstall", bold: true, settings: settings, onChange: onChange, desc: "When on, deleting Easy Optimizer also removes its settings, its own database tables, cache files and its advanced-cache.php file. Your posts, products and orders aren't touched. Leave off if you may reinstall." })), React.createElement(MasterCard, { name: "easyopt_help_improve", title: "Help improve Easy Optimizer", desc: "Share your site URL, WordPress, PHP and plugin versions, host and enabled features. No customer or order data. Saves instantly — no need to press Save.", on: tracking, onToggle: toggleTracking })));
 }
 // ═══════════════════════════════════════════════════
 //  DEBUG LOG DRAWER (2.1.1)
@@ -2251,13 +2600,14 @@ const EOP_DEBUG_SWITCHES = [
         note: 'Force a fresh render instead of the stored HTML',
         opt: 'easyopt_cache',
         tab: 'cache',
+        sub: 'page-cache',
     },
     {
         key: 'nodelayjs',
         label: 'Delay / Defer JavaScript',
         note: 'The most common cause of broken sliders, menus and forms',
         opt: 'easyopt_delay_js',
-        tab: 'optimization',
+        tab: 'cssjs',
         sub: 'js',
     },
     {
@@ -2265,7 +2615,7 @@ const EOP_DEBUG_SWITCHES = [
         label: 'Remove Unused CSS',
         note: 'The most common cause of missing styles and layout shifts',
         opt: 'easyopt_unused_css',
-        tab: 'optimization',
+        tab: 'cssjs',
         sub: 'css',
     },
 ];
@@ -2558,12 +2908,12 @@ function OcRedisWarning({ error, errorCode, errorHint, onCloudways, wooActive })
     // Title + guidance branch on the server-side error classification, so we
     // never tell someone with a NOAUTH error that "no server is running".
     const titles = {
-        auth_required: 'Redis requires authentication',
-        auth_failed: 'Redis credentials are incorrect',
+        auth_required: 'Redis needs a password',
+        auth_failed: 'Wrong Redis username or password',
         auth_noperm: 'Redis user lacks permission',
         bad_database: 'Invalid Redis database number',
         loading: 'Redis is starting up',
-        ext_missing: 'No Redis client available',
+        ext_missing: 'Redis client missing',
         no_server: "Redis isn't connected",
     };
     const title = titles[errorCode] || "Redis isn't connected";
@@ -2583,13 +2933,13 @@ function OcRedisWarning({ error, errorCode, errorHint, onCloudways, wooActive })
     // same thing; the promo copy says it better). Auth cases keep the
     // classifier hint plus the ACL tip.
     React.createElement("p", { style: { margin: '0 0 8px', fontSize: '13px', color: 'var(--eop-text, #374151)', lineHeight: 1.55 } }, showHostCta
-        ? React.createElement(Fragment, null, "Most shared hosting plans include the Redis PHP extension—but not an actual Redis server—so the connection can't be established. ", wooActive
+        ? React.createElement(Fragment, null, "Most shared hosting can talk to Redis but doesn't run a Redis server, so there's nothing to connect to. Ask your host. ", wooActive
             ? "Redis keeps sessions and frequently accessed data in memory, helping deliver a faster checkout experience. "
-            : "Redis-ready hosting reduces database load and improves backend response times. ", React.createElement("a", { href: "https://www.cloudways.com/en/wordpress-hosting.php?id=662383&a_bid=4869f424#basic", target: "_blank", rel: "sponsored nofollow noopener", style: { color: 'var(--eop-accent, #5b4ee8)', fontWeight: 700, textDecoration: 'underline', whiteSpace: 'nowrap' } }, "Try Redis-Ready Hosting \u2192"))
-        : React.createElement(Fragment, null, errorHint || "Redis could not be reached with the current settings. Check the connection details below, then use Test Connection.", isAuth ? React.createElement(Fragment, null, " ", React.createElement("strong", null, "Tip:"), " on Cloudways and other Redis 6+ ACL hosts, copy the Username and Password (and the assigned Database number) from your hosting panel into the fields above.") : null)), 
+            : "Redis-ready hosting takes load off your database and speeds up your site. ", React.createElement("a", { href: "https://www.cloudways.com/en/wordpress-hosting.php?id=662383&a_bid=4869f424#basic", target: "_blank", rel: "sponsored nofollow noopener", style: { color: 'var(--eop-accent, #5b4ee8)', fontWeight: 700, textDecoration: 'underline', whiteSpace: 'nowrap' } }, "Try Redis-Ready Hosting \u2192"))
+        : React.createElement(Fragment, null, errorHint || "Redis could not be reached with the current settings. Check the connection details below, then use Test Connection.", isAuth ? React.createElement(Fragment, null, " ", React.createElement("strong", null, "Tip:"), " on Cloudways and other hosts with Redis 6+ ACL, copy the Username, Password and Database number from your hosting panel into the connection fields.") : null)), 
     // Raw error for support/debugging — small and unmissable-by-devs.
     error ? React.createElement("p", { style: { margin: onCloudways && isNoServer ? '0 0 8px' : 0, fontSize: '12px', color: 'var(--eop-text-muted, #6b7280)', fontFamily: 'var(--eop-mono, monospace)', lineHeight: 1.5, wordBreak: 'break-word' } }, error) : null, (onCloudways && isNoServer)
-        ? React.createElement("p", { style: { margin: 0, fontSize: '13px', color: 'var(--eop-text-soft, #6b7280)', lineHeight: 1.55 } }, "Your server (Cloudways) can run Redis — add it from your Cloudways console, then enter the connection details above or set WP_REDIS_* in wp-config.php.")
+        ? React.createElement("p", { style: { margin: 0, fontSize: '13px', color: 'var(--eop-text-soft, #6b7280)', lineHeight: 1.55 } }, "Your Cloudways server can run Redis: add it in the Cloudways console, then enter its details here (or a developer can set WP_REDIS_* in wp-config.php).")
         : null);
 }
 function OcStat({ label, value }) {
@@ -2664,20 +3014,32 @@ function ObjectCachePanel({ settings, onChange, showToast }) {
     const configSources = (status && status.config_sources) || {};
     const lockedKeys = Object.keys(configSources);
     const hasWrc = !!(status && status.has_wp_redis_config);
-    return React.createElement("div", { style: { display: "block" }, className: "eop-panel", id: "eop-panel-objectcache" }, React.createElement("h2", null, "Object Cache"), React.createElement("p", { className: "description", style: { marginBottom: '18px' } }, "Persistent Redis object cache. Speeds up database-heavy, logged-in and WooCommerce pages by keeping query and option lookups in Redis. Supports Relay, PhpRedis and Predis."), foreign && React.createElement("div", { className: "eop-dep-warning", style: { marginBottom: '16px' } }, React.createElement(Icon, { id: "warn", cls: "eop-icon eop-icon--sm" }), React.createElement("span", null, `Another object-cache drop-in (${d.foreign_name || 'unknown'}) is installed. Easy Optimizer is deferring to it and will not overwrite it — you can still flush from here.`)), React.createElement("label", null, React.createElement("input", { type: "checkbox", name: "easyopt_object_cache", value: "1", checked: on, disabled: foreign, onChange: () => onChange('easyopt_object_cache', on ? '0' : '1') }), " ", React.createElement("strong", null, "Enable Object Cache"), React.createElement("span", { style: { marginLeft: '8px', fontSize: '12px', fontWeight: 400, color: 'var(--eop-text-muted, #6b7280)' } }, "Requires a Redis server on your host")), foreign
-        ? React.createElement("p", { className: "description" }, "Disabled while another object-cache plugin is active. Remove it to let Easy Optimizer manage caching.")
-        : React.createElement("p", { className: "description" }, "Connects WordPress to Redis so repeat database lookups are served from memory. Turning this off reverts to WordPress's built-in cache."), React.createElement("div", { className: "ocfields", style: !on ? { display: 'none' } : { marginTop: '14px' } }, React.createElement(Collapsible, { title: "Connection settings (optional — defaults to localhost)" }, React.createElement("p", { className: "description", style: { marginTop: 0 } }, "If your host defines WP_REDIS_* constants or a WP_REDIS_CONFIG array in wp-config.php, those always take priority and you can leave these blank."), lockedKeys.length > 0 && React.createElement("div", { style: { margin: '0 0 12px', padding: '10px 14px', borderRadius: '8px', background: 'rgba(91,78,232,.07)', border: '1px solid rgba(91,78,232,.25)', fontSize: '13px', color: 'var(--eop-text, #374151)', lineHeight: 1.55 } }, React.createElement("strong", null, "Managed by wp-config.php: "), lockedKeys.join(', '), hasWrc ? " — detected a WP_REDIS_CONFIG array (Object Cache Pro format, common on Cloudways). Easy Optimizer reads its connection details automatically; the matching fields below are ignored." : " — these constants override the matching fields below."), React.createElement(SelectField, { name: "easyopt_oc_client", label: "Client", settings: settings, onChange: onChange, options: [
+    return React.createElement(CardPage, { id: "objectcache" }, foreign && React.createElement(DepWarning, { message: `Another object-cache drop-in (${d.foreign_name || 'unknown'}) is installed. Easy Optimizer is deferring to it and will not overwrite it — you can still flush from here.` }), React.createElement(MasterCard, { name: "easyopt_object_cache", title: "Enable Object Cache", badge: React.createElement(CardBadge, { tone: "muted", text: "Needs Redis on your hosting" }), desc: foreign ? "Off because another plugin's object cache is installed. Turn that one off to use Easy Optimizer's." : "Connects WordPress to Redis so repeated database lookups come from memory. Turn off to go back to WordPress's built-in cache.", on: on, disabled: foreign, settings: settings, onChange: onChange }, React.createElement(Collapsible, { title: "Connection settings (optional — defaults to localhost)" }, React.createElement("p", { className: "description", style: { marginTop: 0 } }, "Blank fields connect to Redis on this server. If your host set WP_REDIS_* or WP_REDIS_CONFIG in wp-config.php, those win and you can leave these blank."), lockedKeys.length > 0 && React.createElement("div", { style: { margin: '0 0 12px', padding: '10px 14px', borderRadius: '8px', background: 'rgba(91,78,232,.07)', border: '1px solid rgba(91,78,232,.25)', fontSize: '13px', color: 'var(--eop-text, #374151)', lineHeight: 1.55 } }, React.createElement("strong", null, "Managed by wp-config.php: "), lockedKeys.join(', '), hasWrc ? " — found a WP_REDIS_CONFIG array (Object Cache Pro format, common on Cloudways). Easy Optimizer uses it automatically; the matching fields below are ignored." : " — these override the matching fields below."), React.createElement(SelectField, { name: "easyopt_oc_client", label: "Client", settings: settings, onChange: onChange, options: [
             { value: 'auto', label: 'Auto (Relay → PhpRedis → Predis)' },
             { value: 'relay', label: 'Relay' },
             { value: 'phpredis', label: 'PhpRedis' },
-            { value: 'predis', label: 'Predis (bundled — no extension needed)' },
-        ] }), React.createElement("div", { className: "easyopt-row" }, React.createElement("label", { htmlFor: "easyopt_oc_host" }, "Host"), React.createElement("input", { type: "text", id: "easyopt_oc_host", name: "easyopt_oc_host", value: settings.easyopt_oc_host || '', placeholder: "127.0.0.1 or /path/to/redis.sock", onChange: (e) => onChange('easyopt_oc_host', e.target.value), style: { minWidth: '280px', fontFamily: 'monospace' } }), React.createElement("p", { className: "description", style: { margin: '4px 0 0' } }, "Hostname, IP, or a unix socket path (starts with /) — the port is ignored for sockets.")), React.createElement("div", { className: "easyopt-row" }, React.createElement("label", { htmlFor: "easyopt_oc_port" }, "Port"), React.createElement("input", { type: "number", id: "easyopt_oc_port", name: "easyopt_oc_port", value: settings.easyopt_oc_port || '', placeholder: "6379", onChange: (e) => onChange('easyopt_oc_port', e.target.value), style: { width: '120px', fontFamily: 'monospace' } })), React.createElement("div", { className: "easyopt-row" }, React.createElement("label", { htmlFor: "easyopt_oc_username" }, "Username"), React.createElement("input", { type: "text", id: "easyopt_oc_username", name: "easyopt_oc_username", value: settings.easyopt_oc_username || '', autoComplete: "off", placeholder: "(none — only for Redis 6+ ACL hosts)", onChange: (e) => onChange('easyopt_oc_username', e.target.value), style: { minWidth: '280px', fontFamily: 'monospace' } }), React.createElement("p", { className: "description", style: { margin: '4px 0 0' } }, "Leave blank unless your host uses Redis ACLs (e.g. Cloudways). Password-only and no-auth servers work without it.")), React.createElement("div", { className: "easyopt-row" }, React.createElement("label", { htmlFor: "easyopt_oc_password" }, "Password"), React.createElement("input", { type: "password", id: "easyopt_oc_password", name: "easyopt_oc_password", value: settings.easyopt_oc_password || '', autoComplete: "new-password", placeholder: "(none)", onChange: (e) => onChange('easyopt_oc_password', e.target.value), style: { minWidth: '280px', fontFamily: 'monospace' } })), React.createElement("div", { className: "easyopt-row" }, React.createElement("label", { htmlFor: "easyopt_oc_database" }, "Database"), React.createElement("input", { type: "number", id: "easyopt_oc_database", name: "easyopt_oc_database", value: settings.easyopt_oc_database || '', placeholder: "0", onChange: (e) => onChange('easyopt_oc_database', e.target.value), style: { width: '120px', fontFamily: 'monospace' } })), React.createElement("div", { className: "easyopt-row" }, React.createElement("label", { htmlFor: "easyopt_oc_prefix" }, "Key prefix"), React.createElement("input", { type: "text", id: "easyopt_oc_prefix", name: "easyopt_oc_prefix", value: settings.easyopt_oc_prefix || '', placeholder: "auto", onChange: (e) => onChange('easyopt_oc_prefix', e.target.value), style: { minWidth: '220px', fontFamily: 'monospace' } })), React.createElement("div", { className: "easyopt-row", style: { marginTop: '8px' } }, React.createElement("label", { htmlFor: "easyopt_oc_tls" }, "Use TLS (rediss://)"), React.createElement("div", null, React.createElement("input", { type: "checkbox", id: "easyopt_oc_tls", name: "easyopt_oc_tls", checked: Number(settings.easyopt_oc_tls) === 1, onChange: () => onChange('easyopt_oc_tls', Number(settings.easyopt_oc_tls) === 1 ? '0' : '1') })), React.createElement("p", { className: "description", style: { margin: '4px 0 0' } }, "Required by some managed Redis providers (Upstash, DigitalOcean, Azure). Ignored for unix sockets.")), React.createElement("div", { className: "easyopt-field-row", style: { marginTop: '12px' } }, React.createElement("button", { type: "button", className: "button button-secondary", onClick: doTest, disabled: busy === 'test' }, busy === 'test' ? 'Testing…' : 'Test Connection'), React.createElement("span", { style: { marginLeft: '12px', color: msgColor, fontSize: '13px' } }, msg)))), React.createElement("div", { className: "eop-card", style: { marginTop: '18px' } }, React.createElement("div", { className: "eop-card__header" }, React.createElement("div", null, React.createElement("div", { className: "eop-card__kicker" }, "Status"), React.createElement("div", { className: "eop-card__title" }, "Redis & environment")), React.createElement("button", { type: "button", className: "button button-secondary button-small", onClick: load, disabled: loading }, loading ? 'Refreshing…' : 'Refresh')), (loading && !status)
+            { value: 'predis', label: 'Predis (built in — nothing to install)' },
+        ] }), React.createElement("div", { className: "easyopt-row" }, React.createElement("label", { htmlFor: "easyopt_oc_host" }, "Host"), React.createElement("input", { type: "text", id: "easyopt_oc_host", name: "easyopt_oc_host", value: settings.easyopt_oc_host || '', placeholder: "127.0.0.1 or /path/to/redis.sock", onChange: (e) => onChange('easyopt_oc_host', e.target.value), style: { fontFamily: 'monospace' } }), React.createElement("p", { className: "description" }, "The Redis address from your host: hostname, IP or socket path (starts with /).")), React.createElement("div", { className: "easyopt-row" }, React.createElement("label", { htmlFor: "easyopt_oc_port" }, "Port"), React.createElement("input", { type: "number", id: "easyopt_oc_port", name: "easyopt_oc_port", value: settings.easyopt_oc_port || '', placeholder: "6379", onChange: (e) => onChange('easyopt_oc_port', e.target.value), style: { fontFamily: 'monospace' } })), React.createElement("div", { className: "easyopt-row" }, React.createElement("label", { htmlFor: "easyopt_oc_username" }, "Username"), React.createElement("input", { type: "text", id: "easyopt_oc_username", name: "easyopt_oc_username", value: settings.easyopt_oc_username || '', autoComplete: "off", placeholder: "(leave blank unless your host gave one)", onChange: (e) => onChange('easyopt_oc_username', e.target.value), style: { fontFamily: 'monospace' } }), React.createElement("p", { className: "description" }, "Leave blank unless your host gave you a Redis username (e.g. Cloudways). Password-only servers don't need it.")), React.createElement("div", { className: "easyopt-row" }, React.createElement("label", { htmlFor: "easyopt_oc_password" }, "Password"), React.createElement(SecretInput, { name: "easyopt_oc_password", settings: settings, onChange: onChange, placeholder: "(none)", style: { fontFamily: 'monospace' } })), React.createElement("div", { className: "easyopt-row" }, React.createElement("label", { htmlFor: "easyopt_oc_database" }, "Database (number)"), React.createElement("input", { type: "number", id: "easyopt_oc_database", name: "easyopt_oc_database", value: settings.easyopt_oc_database || '', placeholder: "0", onChange: (e) => onChange('easyopt_oc_database', e.target.value), style: { fontFamily: 'monospace' } })), React.createElement("div", { className: "easyopt-row" }, React.createElement("label", { htmlFor: "easyopt_oc_prefix" }, "Key prefix"), React.createElement("input", { type: "text", id: "easyopt_oc_prefix", name: "easyopt_oc_prefix", value: settings.easyopt_oc_prefix || '', placeholder: "auto", onChange: (e) => onChange('easyopt_oc_prefix', e.target.value), style: { fontFamily: 'monospace' } })), React.createElement(Check, { name: "easyopt_oc_tls", label: "Use TLS (rediss://)", bold: true, settings: settings, onChange: onChange, desc: "Turn on only if your Redis provider requires it (e.g. Upstash, DigitalOcean, Azure)." }), React.createElement(CardActions, null, React.createElement("button", { type: "button", className: "button button-secondary", onClick: doTest, disabled: busy === 'test' }, busy === 'test' ? 'Testing…' : 'Test Connection'), msg && React.createElement("span", { style: { color: msgColor, fontSize: '13px' } }, msg)))), React.createElement("div", { className: "eop-card" }, React.createElement("div", { className: "eop-card__header" }, React.createElement("div", null, React.createElement("div", { className: "eop-card__kicker" }, "Status"), React.createElement("div", { className: "eop-card__title" }, "Redis & environment")), React.createElement("button", { type: "button", className: "button button-secondary button-small", onClick: load, disabled: loading }, loading ? 'Refreshing…' : 'Refresh')), (loading && !status)
         ? React.createElement("div", { className: "eop-spinner", style: { margin: '20px auto' } })
-        : React.createElement(Fragment, null, React.createElement("div", { style: { display: 'flex', flexWrap: 'wrap', gap: '8px', margin: '6px 0 16px' } }, React.createElement(OcChip, { tone: ocActive ? (ocConnected ? 'ok' : 'warn') : 'off', label: ocActive ? (ocConnected ? 'Object cache active' : 'Active — not connected') : 'Not active' }), React.createElement(OcChip, { ok: !!d.phpredis, label: 'PhpRedis', note: d.phpredis && d.phpredis_version ? 'v' + d.phpredis_version : '' }), React.createElement(OcChip, { ok: !!d.relay, label: 'Relay' }), React.createElement(OcChip, { ok: !!d.predis, label: 'Predis' }), React.createElement(OcChip, { ok: !!d.igbinary, label: 'igbinary' }), React.createElement(OcChip, { ok: !!d.dropin_present, label: d.dropin_ours ? 'Drop-in: Easy Optimizer' : (d.dropin_foreign ? 'Drop-in: ' + (d.foreign_name || 'other') : 'Drop-in: none') }), d.plugin ? React.createElement(OcChip, { ok: true, label: d.plugin }) : null), status ? React.createElement("div", null, React.createElement(OcStat, { label: 'Provider', value: status.provider || '—' }), React.createElement(OcStat, { label: 'Connection', value: status.connected ? (status.client || 'connected') : 'not connected' }), React.createElement(OcStat, { label: 'Redis version', value: status.redis_version || '—' }), React.createElement(OcStat, { label: 'Memory used', value: ocBytes(status.memory_used) }), React.createElement(OcStat, { label: 'Memory limit', value: ocBytes(status.memory_total) }), React.createElement(OcStat, { label: 'Database', value: String(status.database) }), React.createElement(OcStat, { label: 'Key prefix', value: status.prefix || '—' }), (status.hits !== null && status.hits !== undefined) ? React.createElement(OcStat, { label: ocConnected ? 'Hits / misses (this request)' : 'Runtime hits / misses (not Redis)', value: status.hits + ' / ' + status.misses }) : null, (redisDown ? React.createElement(OcRedisWarning, { error: status.error, errorCode: status.error_code || '', errorHint: status.error_hint || '', onCloudways: onCloudways, wooActive: !!(CFG().wooActive) }) : ((on && status.error) ? React.createElement("p", { className: "description", style: { color: 'var(--eop-danger)', marginTop: '10px' } }, status.error) : null))) : null, React.createElement("div", { style: { marginTop: '14px' } }, React.createElement("button", { type: "button", className: "button button-secondary", onClick: doFlush, disabled: busy === 'flush' || !(status && status.active) }, busy === 'flush' ? 'Flushing…' : 'Flush Object Cache')))));
+        : React.createElement(Fragment, null, React.createElement("div", { style: { display: 'flex', flexWrap: 'wrap', gap: '8px', margin: '6px 0 16px' } }, React.createElement(OcChip, { tone: ocActive ? (ocConnected ? 'ok' : 'warn') : 'off', label: ocActive ? (ocConnected ? 'Object cache active' : 'On — Redis not connected') : 'Not active' }), React.createElement(OcChip, { ok: !!d.phpredis, label: 'PhpRedis', note: d.phpredis && d.phpredis_version ? 'v' + d.phpredis_version : '' }), React.createElement(OcChip, { ok: !!d.relay, label: 'Relay' }), React.createElement(OcChip, { ok: !!d.predis, label: 'Predis' }), React.createElement(OcChip, { ok: !!d.igbinary, label: 'igbinary' }), React.createElement(OcChip, { ok: !!d.dropin_present, label: d.dropin_ours ? 'Drop-in: Easy Optimizer' : (d.dropin_foreign ? 'Drop-in: ' + (d.foreign_name || 'other') : 'Drop-in: none') }), d.plugin ? React.createElement(OcChip, { ok: true, label: d.plugin }) : null), status ? React.createElement("div", null, React.createElement(OcStat, { label: 'Provider', value: status.provider || '—' }), React.createElement(OcStat, { label: 'Connection', value: status.connected ? (status.client || 'connected') : 'not connected' }), React.createElement(OcStat, { label: 'Redis version', value: status.redis_version || '—' }), React.createElement(OcStat, { label: 'Memory used', value: ocBytes(status.memory_used) }), React.createElement(OcStat, { label: 'Memory limit', value: ocBytes(status.memory_total) }), React.createElement(OcStat, { label: 'Database', value: String(status.database) }), React.createElement(OcStat, { label: 'Key prefix', value: status.prefix || '—' }), (status.hits !== null && status.hits !== undefined) ? React.createElement(OcStat, { label: ocConnected ? 'Hits / misses (this page load)' : 'Runtime hits / misses (not Redis)', value: status.hits + ' / ' + status.misses }) : null, (redisDown ? React.createElement(OcRedisWarning, { error: status.error, errorCode: status.error_code || '', errorHint: status.error_hint || '', onCloudways: onCloudways, wooActive: !!(CFG().wooActive) }) : ((on && status.error) ? React.createElement("p", { className: "description", style: { color: 'var(--eop-danger)', marginTop: '10px' } }, status.error) : null))) : null, React.createElement("div", { style: { marginTop: '14px' } }, React.createElement("button", { type: "button", className: "button button-secondary", onClick: doFlush, disabled: busy === 'flush' || !(status && status.active) }, busy === 'flush' ? 'Flushing…' : 'Flush Object Cache')))));
 }
 function App() {
     const init = CFG();
-    const [tab, setTab] = useState(() => localStorage.getItem('easyopt_tab') || 'dashboard');
+    // Which section is open, and the tab last used in each section.
+    const [nav, setNav] = useState(() => {
+        const [t, sub] = resolveRoute(localStorage.getItem('easyopt_tab') || 'dashboard');
+        let subs = {};
+        try {
+            subs = JSON.parse(localStorage.getItem('easyopt_subs')) || {};
+        }
+        catch (e) { /* nothing stored yet */ }
+        return { tab: t, subs: sub ? { ...subs, [t]: sub } : subs };
+    });
+    const tab = nav.tab;
+    useEffect(() => {
+        localStorage.setItem('easyopt_tab', nav.tab);
+        localStorage.setItem('easyopt_subs', JSON.stringify(nav.subs));
+    }, [nav]);
     const [settings, setSettings] = useState(init.settings || {});
     const [baseline, setBaseline] = useState(init.settings || {});
     // FluxCDN connect/disconnect writes settings server-side directly, then
@@ -2745,6 +3107,7 @@ function App() {
     const saveOne = useCallback((name, value) => {
         setSettings((p) => ({ ...p, [name]: value }));
         api.post('/settings', { changes: { [name]: value } }).then((r) => {
+            adoptSecrets(r);
             if (r?.settings) {
                 setBaseline((b) => ({ ...b, [name]: r.settings[name] }));
             }
@@ -2791,18 +3154,29 @@ function App() {
     }), []);
     useEffect(() => { refreshPsi(); return () => { if (psiPollRef.current)
         clearInterval(psiPollRef.current); }; }, []);
-    const switchTab = useCallback((t, sub) => {
-        if (sub)
-            localStorage.setItem('easyopt_opt_sub', sub);
-        setTab(t);
-        localStorage.setItem('easyopt_tab', t);
+    const switchTab = useCallback((t, s) => {
+        const [next, sub] = resolveRoute(t, s);
+        setNav((p) => ({ tab: next, subs: sub ? { ...p.subs, [next]: sub } : p.subs }));
     }, []);
+    // The sidebar chip and the cloud bar share one reading. It is taken again on
+    // leaving the Cloud tab, because connecting and switching happen there.
+    const [cloud, setCloud] = useState(null);
+    const fetchCloud = useCallback(() => api.get('/cloud/usage').then((r) => setCloud(r || {})), []);
+    useEffect(() => { if (tab !== 'flux' || !cloud)
+        fetchCloud(); }, [tab === 'flux']);
+    useEffect(() => {
+        // (2.7.6) The Cloud tab announces a started trial without a reload.
+        window.addEventListener('easyopt-cloud-changed', fetchCloud);
+        return () => window.removeEventListener('easyopt-cloud-changed', fetchCloud);
+    }, []);
+    const cloudOn = cloud ? (!!cloud.connected && Number((cloud.usage && cloud.usage.active) || 0) !== 0) : null;
     const save = useCallback(() => {
         const keys = Object.keys(dirty);
         if (!keys.length)
             return;
         setSaving(true);
         api.post('/settings', { changes: dirty }).then((r) => {
+            adoptSecrets(r);
             if (r?.settings) {
                 setBaseline(r.settings);
                 setSettings((p) => ({ ...p, ...r.settings }));
@@ -2822,7 +3196,10 @@ function App() {
     const mode = settings.easyopt_cache_mode;
     const modeLabel = cacheOn ? (mode === 'htaccess' ? 'Apache mode' : 'PHP mode') : 'Cache off';
     const crumb = NAV.flatMap(g => g.items).find(i => i.key === tab)?.label || 'Dashboard';
-    return (React.createElement("div", { className: "eop_wrap" }, React.createElement("div", { className: "eop-app" }, React.createElement("aside", { className: "eop-sidebar" }, React.createElement("div", { className: "eop-brand" }, React.createElement("div", { className: "eop-brand__mark" }, React.createElement(Icon, { id: "zap" })), React.createElement("div", null, React.createElement("div", { className: "eop-brand__name" }, "Easy Optimizer"), React.createElement("div", { className: "eop-brand__meta" }, "v", init.version))), React.createElement("nav", { className: "eop-nav" }, NAV.map((g, gi) => (React.createElement(NavGroup, { key: g.group || ('bottom' + gi), g: g, tab: tab, switchTab: switchTab, settings: settings })))), React.createElement("div", { className: "eop-sidebar__help" }, React.createElement("div", { className: "eop-help__title" }, "Need help?"), React.createElement("div", { className: "eop-help__body" }, "Contact us or ", React.createElement("a", { href: "https://wordpress.org/support/plugin/easy-optimizer/", target: "_blank", rel: "noopener" }, "open a support ticket"), " on WordPress.org")), React.createElement("div", { className: "eop-sidebar__rate", style: { padding: '12px 16px', fontSize: '13px', color: 'var(--eop-text-muted)', textAlign: 'center' } }, "Enjoying Easy Optimizer? ", React.createElement("div", { style: { marginTop: '6px' } }, React.createElement("a", { href: "https://wordpress.org/support/plugin/easy-optimizer/reviews/#new-post", target: "_blank", rel: "noopener", style: { fontWeight: 600, color: 'var(--eop-brand)', textDecoration: 'none' } }, "\u2B50 Rate us")))), React.createElement("main", { className: "eop-main" }, React.createElement("div", { className: "eop-topbar" }, React.createElement("div", { className: "eop-crumbs" }, React.createElement("span", { className: "eop-crumbs__home" }, "Easy Optimizer"), React.createElement("span", { className: "eop-crumbs__sep" }, "\u203A"), React.createElement("span", { className: "eop-crumbs__active" }, crumb)), React.createElement("div", { className: "eop-topbar__right" }, React.createElement("span", { className: `eop-pill ${cacheOn ? 'eop-pill--ok' : 'eop-pill--warn'}` }, React.createElement("span", { className: "eop-pill__dot" }), cacheOn ? 'Healthy' : 'Idle'), React.createElement("span", { className: "eop-pill eop-pill--brand" }, modeLabel), React.createElement("button", { onClick: toggleSafeMode, disabled: safeBusy, title: safeMode ? 'Safe Mode is ON — click to restore your previous settings' : 'Apply the Safe preset (your current settings are backed up so you can revert)', className: 'eop-btn eop-btn--sm ' + (safeMode ? 'eop-btn--safe-on' : 'eop-btn--ghost'), style: { position: 'relative' } }, React.createElement(Icon, { id: "lock", cls: "eop-icon eop-icon--sm" }), " ", safeBusy ? '…' : (safeMode ? 'Safe Mode: On' : 'Safe Mode')), 
+    const section = SECTIONS[tab];
+    const sub = section && section.tabs ? (section.tabs.find((t) => t.key === nav.subs[tab]) || section.tabs[0]) : null;
+    const page = sub ? tab + '/' + sub.key : tab;
+    return (React.createElement("div", { className: "eop_wrap" }, React.createElement("div", { className: "eop-app" }, React.createElement("aside", { className: "eop-sidebar" }, React.createElement("div", { className: "eop-brand" }, React.createElement("div", { className: "eop-brand__mark" }, React.createElement(Icon, { id: "zap" })), React.createElement("div", null, React.createElement("div", { className: "eop-brand__name" }, "Easy Optimizer"), React.createElement("div", { className: "eop-brand__meta" }, "v", init.version))), React.createElement("nav", { className: "eop-nav" }, NAV.map((g, gi) => (React.createElement(NavGroup, { key: g.group || ('bottom' + gi), g: g, tab: tab, switchTab: switchTab, cloudOn: cloudOn })))), React.createElement("div", { className: "eop-sidebar__help" }, React.createElement("div", { className: "eop-help__title" }, "Need help?"), React.createElement("div", { className: "eop-help__body" }, "Contact us or ", React.createElement("a", { href: "https://wordpress.org/support/plugin/easy-optimizer/", target: "_blank", rel: "noopener" }, "open a support ticket"), " on WordPress.org")), React.createElement("div", { className: "eop-sidebar__rate", style: { padding: '12px 16px', fontSize: '13px', color: 'var(--eop-text-muted)', textAlign: 'center' } }, "Enjoying Easy Optimizer? ", React.createElement("div", { style: { marginTop: '6px' } }, React.createElement("a", { href: "https://wordpress.org/support/plugin/easy-optimizer/reviews/#new-post", target: "_blank", rel: "noopener", style: { fontWeight: 600, color: 'var(--eop-brand)', textDecoration: 'none' } }, "\u2B50 Rate us")))), React.createElement("main", { className: "eop-main" }, React.createElement("div", { className: "eop-topbar" }, React.createElement("div", { className: "eop-crumbs" }, React.createElement("span", { className: "eop-crumbs__home" }, "Easy Optimizer"), React.createElement("span", { className: "eop-crumbs__sep" }, "\u203A"), sub && React.createElement(Fragment, null, React.createElement("span", { className: "eop-crumbs__home" }, crumb), React.createElement("span", { className: "eop-crumbs__sep" }, "\u203A")), React.createElement("span", { className: "eop-crumbs__active" }, sub ? sub.label : crumb)), React.createElement("div", { className: "eop-topbar__right" }, React.createElement("span", { className: `eop-pill ${cacheOn ? 'eop-pill--ok' : 'eop-pill--warn'}` }, React.createElement("span", { className: "eop-pill__dot" }), cacheOn ? 'Healthy' : 'Idle'), React.createElement("span", { className: "eop-pill eop-pill--brand" }, modeLabel), React.createElement("button", { onClick: toggleSafeMode, disabled: safeBusy, title: safeMode ? 'Safe Mode is ON — click to restore your previous settings' : 'Apply the Safe preset (your current settings are backed up so you can revert)', className: 'eop-btn eop-btn--sm ' + (safeMode ? 'eop-btn--safe-on' : 'eop-btn--ghost'), style: { position: 'relative' } }, React.createElement(Icon, { id: "lock", cls: "eop-icon eop-icon--sm" }), " ", safeBusy ? '…' : (safeMode ? 'Safe Mode: On' : 'Safe Mode')), 
     // (2.6.0) Sits between Safe Mode and Debug Log because
     // that is the order of escalation: something looks
     // wrong → find out what (Debug Issues) → read the
@@ -2838,7 +3215,7 @@ function App() {
             color: '#fff', fontSize: '10px', fontWeight: 700,
             borderRadius: '8px', padding: '1px 5px', lineHeight: '14px',
             minWidth: '16px', textAlign: 'center'
-        } }, logCounts.total)))), React.createElement("div", { className: "eop-content" }, React.createElement(ServiceBar, { switchTab: switchTab }), tab === 'dashboard' && React.createElement(DashboardPanel, { settings: settings, stats: init.stats, modules: (init.modules || []).map((m) => ({ ...m, enabled: Number(settings[m.opt]) === 1 })), switchTab: switchTab, latestStats: latestStats, showToast: showToast, psiData: psiData, refreshPsi: refreshPsi }), tab === 'cache' && React.createElement(CachePanel, { settings: settings, onChange: onChange }), tab === 'objectcache' && React.createElement(ObjectCachePanel, { settings: settings, onChange: onChange, showToast: showToast }), tab === 'optimization' && React.createElement(OptimizationPanel, { settings: settings, onChange: onChange }), tab === 'fonts' && React.createElement(FontsPanel, { settings: settings, onChange: onChange, switchTab: switchTab }), tab === 'flux' && React.createElement(FluxPressPanel, { settings: settings, onChange: onChange, switchTab: switchTab, showToast: showToast, applyServerSettings: applyServerSettings }), tab === 'imgopt' && React.createElement(SmartImagesPanel, { settings: settings, onChange: onChange, applyServerSettings: applyServerSettings }), tab === 'bloat' && React.createElement(BloatPanel, { settings: settings, onChange: onChange }), tab === 'cloudflare' && React.createElement(CloudflarePanel, { settings: settings, onChange: onChange }), tab === 'database' && React.createElement(DatabasePanel, { settings: settings, onChange: onChange }), tab === 'heartbeat' && React.createElement(HeartbeatCronPanel, { settings: settings, onChange: onChange }), tab === 'accessibility' && React.createElement(AccessibilityPanel, { settings: settings, onChange: onChange }), tab === 'backend' && React.createElement(BackendPanel, { settings: settings, onChange: onChange, saveOne: saveOne, showToast: showToast }), tab === 'settings' && React.createElement(SettingsPanel, { settings: settings, onChange: onChange, showToast: showToast })))), logOpen && React.createElement(DebugLogDrawer, { entries: logEntries, counts: logCounts, loading: logLoading, onClose: () => setLogOpen(false), onClear: clearLog, onRefresh: fetchLog }), debugOpen && React.createElement(DebugIssuesDrawer, { settings: settings, onClose: () => setDebugOpen(false), switchTab: switchTab }), React.createElement(SaveBar, { dirty: dirty, onSave: save, onDiscard: discard, saving: saving }), React.createElement(Toast, { text: toast.text, kind: toast.kind })));
+        } }, logCounts.total)))), React.createElement("div", { className: "eop-content" }, tab !== 'flux' && React.createElement(ServiceBar, { switchTab: switchTab, d: cloud }), React.createElement(section ? "div" : Fragment, section ? { className: "eop-page" } : null, section && React.createElement("header", { className: "eop-page-header" }, React.createElement("h1", { className: "eop-page-title" }, section.title), React.createElement("p", { className: "eop-page-desc" }, section.desc)), sub && React.createElement(SubTabNav, { tabs: section.tabs, active: sub.key, page: true, onChange: (k) => switchTab(tab, k) }), sub && sub.desc && React.createElement("p", { className: "eop-tab-desc" }, sub.desc), page === 'dashboard' && React.createElement(DashboardPanel, { settings: settings, stats: init.stats, modules: (init.modules || []).map((m) => ({ ...m, enabled: Number(settings[m.opt]) === 1 })), switchTab: switchTab, latestStats: latestStats, showToast: showToast, psiData: psiData, refreshPsi: refreshPsi }), page === 'cache/page-cache' && React.createElement(CachePanel, { settings: settings, onChange: onChange }), page === 'cache/warmup' && React.createElement(WarmupPanel, { settings: settings, onChange: onChange, switchTab: switchTab }), page === 'cache/rules' && React.createElement(CacheRulesPanel, { settings: settings, onChange: onChange, switchTab: switchTab }), page === 'cdn' && React.createElement(CloudflarePanel, { settings: settings, onChange: onChange }), page === 'cssjs/js' && React.createElement(JsSubPanel, { settings: settings, onChange: onChange, switchTab: switchTab }), page === 'cssjs/css' && React.createElement(CssSubPanel, { settings: settings, onChange: onChange }), page === 'media/images' && React.createElement(SmartImagesPanel, { settings: settings, onChange: onChange, applyServerSettings: applyServerSettings }), page === 'media/lazy' && React.createElement(LazySubPanel, { settings: settings, onChange: onChange }), page === 'media/fonts' && React.createElement(FontsPanel, { settings: settings, onChange: onChange, switchTab: switchTab }), page === 'media/priority' && React.createElement(LcpSubPanel, { settings: settings, onChange: onChange }), page === 'cssjs/prefetch' && React.createElement(PrefetchSubPanel, { settings: settings, onChange: onChange }), page === 'server/database' && React.createElement(DbCleanupSubPanel, { settings: settings, onChange: onChange }), page === 'server/autoload' && React.createElement(DbAutoloadSubPanel, { settings: settings, onChange: onChange }), page === 'server/objectcache' && React.createElement(ObjectCachePanel, { settings: settings, onChange: onChange, showToast: showToast }), page === 'server/heartbeat' && React.createElement(HeartbeatCronPanel, { settings: settings, onChange: onChange }), page === 'server/cleanup' && React.createElement(BloatPanel, { settings: settings, onChange: onChange }), page === 'diagnostics/inspector' && React.createElement(UrlInspectorPanel, { settings: settings, saveOne: saveOne, showToast: showToast }), page === 'diagnostics/analyzer' && React.createElement(BackendPanel, { settings: settings, onChange: onChange, saveOne: saveOne, showToast: showToast }), page === 'lighthouse' && React.createElement(AccessibilityPanel, { settings: settings, onChange: onChange }), page === 'flux' && React.createElement(FluxPressPanel, { settings: settings, onChange: onChange, switchTab: switchTab, showToast: showToast, applyServerSettings: applyServerSettings }), page === 'settings' && React.createElement(SettingsPanel, { settings: settings, onChange: onChange, showToast: showToast }))))), logOpen && React.createElement(DebugLogDrawer, { entries: logEntries, counts: logCounts, loading: logLoading, onClose: () => setLogOpen(false), onClear: clearLog, onRefresh: fetchLog }), debugOpen && React.createElement(DebugIssuesDrawer, { settings: settings, onClose: () => setDebugOpen(false), switchTab: switchTab }), React.createElement(SaveBar, { dirty: dirty, onSave: save, onDiscard: discard, saving: saving }), React.createElement(Toast, { text: toast.text, kind: toast.kind })));
 }
 // ── MOUNT ──
 const container = document.getElementById('easyopt-app');

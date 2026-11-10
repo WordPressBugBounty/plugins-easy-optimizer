@@ -271,6 +271,33 @@ class EasyOpt_Rest_Dashboard {
             ),
         ) + $admin );
 
+        // ── URL Inspector (2.8.0) ─────────────────────────────────────
+        // Everything known about ONE url, read on demand; never polled.
+        register_rest_route( self::NS, '/debug/url-inspect', array(
+            'methods'  => 'GET',
+            'callback' => array( __CLASS__, 'debug_url_inspect' ),
+            'args'     => array(
+                'url' => array( 'type' => 'string', 'required' => true, 'sanitize_callback' => 'esc_url_raw' ),
+            ),
+        ) + $admin );
+        // The "Test this page" frame's report: stored per URL, answered with
+        // suggested exclusions (shown, never applied by themselves).
+        register_rest_route( self::NS, '/debug/page-test', array(
+            'methods'  => 'POST',
+            'callback' => array( __CLASS__, 'debug_page_test' ),
+            'args'     => array(
+                'url'     => array( 'type' => 'string', 'required' => true, 'sanitize_callback' => 'esc_url_raw' ),
+                'errors'  => array( 'type' => 'array', 'default' => array() ),
+                'delayed' => array( 'type' => 'integer', 'default' => 0 ),
+            ),
+        ) + $admin );
+
+        // (2.8.0) Own CDN: run the reachability check now.
+        register_rest_route( self::NS, '/cdn/check', array(
+            'methods'  => 'POST',
+            'callback' => array( __CLASS__, 'cdn_check' ),
+        ) + $admin );
+
         // ── Object Cache (2.4.7) ─────────────────────────────────────
         register_rest_route( self::NS, '/objectcache/status', array(
             'methods'  => 'GET',
@@ -306,6 +333,12 @@ class EasyOpt_Rest_Dashboard {
     public static function get_dashboard_stats( $request = null, $fast = false ) {
         $cache_on  = (int) EasyOpt_Config::get( 'easyopt_cache' );
         $preload   = (int) EasyOpt_Config::get( 'easyopt_cache_preload' );
+
+        // (2.8.0) The admin polls this while a preload runs, so it is where a
+        // broken runner chain gets noticed: restart it (throttled, dispatch only).
+        if ( $preload && $request instanceof WP_REST_Request && class_exists( 'EasyOpt_Cache_Preload' ) ) {
+            EasyOpt_Cache_Preload::maybe_kick();
+        }
 
         // ── Pages cached ─────────────────────────────────────────────
         // Prefer the atomic counter (O(1), single option read) over the
@@ -475,17 +508,53 @@ class EasyOpt_Rest_Dashboard {
         return rest_ensure_response( $out );
     }
 
+    /** (2.8.0) URL Inspector: everything known about one URL on this site. */
+    public static function debug_url_inspect( $request ) {
+        $url = (string) $request->get_param( 'url' );
+        if ( '' === $url || ! self::is_own_url( $url ) ) {
+            return new WP_Error( 'easyopt_bad_url', __( 'Enter a page address on this site.', 'easy-optimizer' ), array( 'status' => 400 ) );
+        }
+        return rest_ensure_response( EasyOpt_Url_Inspector::inspect( $url ) );
+    }
+
+    /** (2.8.0) Store a "Test this page" report and return it with suggestions. */
+    public static function debug_page_test( $request ) {
+        $url = (string) $request->get_param( 'url' );
+        if ( '' === $url || ! self::is_own_url( $url ) ) {
+            return new WP_Error( 'easyopt_bad_url', __( 'Enter a page address on this site.', 'easy-optimizer' ), array( 'status' => 400 ) );
+        }
+        return rest_ensure_response( EasyOpt_Url_Inspector::record_test(
+            $url,
+            (array) $request->get_param( 'errors' ),
+            (int) $request->get_param( 'delayed' )
+        ) );
+    }
+
+    /** (2.8.0) Check the site's own CDN now; returns its stored health (or null when it is not set up). */
+    public static function cdn_check( $request ) {
+        $all = EasyOpt_CDN_Assets::check_health( 'custom' );
+        return rest_ensure_response( array( 'custom' => isset( $all['custom'] ) ? $all['custom'] : null ) );
+    }
+
+    /** Same host as the site (www. or not). */
+    private static function is_own_url( $url ) {
+        $host = strtolower( (string) wp_parse_url( $url, PHP_URL_HOST ) );
+        $home = strtolower( (string) wp_parse_url( home_url(), PHP_URL_HOST ) );
+        return '' !== $host && preg_replace( '/^www\./', '', $host ) === preg_replace( '/^www\./', '', $home );
+    }
+
     /**
      * Module status list for the dashboard overview card.
      */
     private static function get_module_statuses() {
         $items = array(
-            array( 'key' => 'cache',       'title' => __( 'Page Cache', 'easy-optimizer' ),                          'opt' => 'easyopt_cache',          'tab' => 'cache',        'sub' => '' ),
-            array( 'key' => 'delay_js',    'title' => __( 'Delay Javascript', 'easy-optimizer' ),                    'opt' => 'easyopt_delay_js',       'tab' => 'optimization', 'sub' => 'js' ),
-            array( 'key' => 'unused_css',  'title' => __( 'Remove Unused CSS', 'easy-optimizer' ),                   'opt' => 'easyopt_unused_css',     'tab' => 'optimization', 'sub' => 'css' ),
-            array( 'key' => 'lazy_images', 'title' => __( 'Lazyload Images', 'easy-optimizer' ),                     'opt' => 'easyopt_lazy_images',    'tab' => 'optimization', 'sub' => 'lazy' ),
-            array( 'key' => 'lcp',         'title' => __( 'Preload Largest Contentful Paint', 'easy-optimizer' ),     'opt' => 'easyopt_lcp_preload',    'tab' => 'optimization', 'sub' => 'lcp' ),
-            array( 'key' => 'img_cdn',     'title' => __( 'Image Optimizer (CDN)', 'easy-optimizer' ),                'opt' => 'easyopt_img_opt',        'tab' => 'imgopt',       'sub' => '' ),
+            array( 'key' => 'cache',       'title' => __( 'Page Cache', 'easy-optimizer' ),                          'opt' => 'easyopt_cache',          'tab' => 'cache',        'sub' => 'page-cache' ),
+            array( 'key' => 'delay_js',    'title' => __( 'Delay Javascript', 'easy-optimizer' ),                    'opt' => 'easyopt_delay_js',       'tab' => 'cssjs',        'sub' => 'js' ),
+            array( 'key' => 'defer_js',    'title' => __( 'Defer Javascript', 'easy-optimizer' ),                    'opt' => 'easyopt_defer_js',       'tab' => 'cssjs',        'sub' => 'js' ),
+            array( 'key' => 'unused_css',  'title' => __( 'Remove Unused CSS', 'easy-optimizer' ),                   'opt' => 'easyopt_unused_css',     'tab' => 'cssjs',        'sub' => 'css' ),
+            array( 'key' => 'lazy_images', 'title' => __( 'Lazyload Images', 'easy-optimizer' ),                     'opt' => 'easyopt_lazy_images',    'tab' => 'media',        'sub' => 'lazy' ),
+            array( 'key' => 'lcp',         'title' => __( 'Preload Largest Contentful Paint', 'easy-optimizer' ),     'opt' => 'easyopt_lcp_preload',    'tab' => 'media',        'sub' => 'priority' ),
+            array( 'key' => 'img_cdn',     'title' => __( 'Image Optimizer (CDN)', 'easy-optimizer' ),                'opt' => 'easyopt_img_opt',        'tab' => 'media',        'sub' => 'images' ),
         );
 
         foreach ( $items as &$m ) {
@@ -626,6 +695,13 @@ class EasyOpt_Rest_Dashboard {
         // Accept inline credentials so the user can test BEFORE saving.
         $token   = $request->get_param( 'token' );
         $zone_id = $request->get_param( 'zone_id' );
+
+        // (2.8.0) The token field is write-only, so the browser sends it only
+        // when the user typed a new one. Test an edited zone against the
+        // stored token.
+        if ( ! $token && $zone_id ) {
+            $token = trim( (string) EasyOpt_Config::get( 'cf_api_token', '' ) );
+        }
 
         if ( $token && $zone_id ) {
             $result = EasyOpt_Cloudflare::api_verify_with( $token, $zone_id );
@@ -1329,30 +1405,24 @@ class EasyOpt_Rest_Dashboard {
      * @return string[]
      */
     public static function secret_setting_keys() {
-        return (array) apply_filters( 'easyopt_secret_setting_keys', array(
-            'easyopt_cf_api_token',
-            'easyopt_oc_password',
-            'easyopt_oc_username',
-            'easyopt_fluxcdn_api_key',
-            'easyopt_fluxcdn_activation_id',
-            // (2.6.1) The FluxPress cloud credentials. These moved into their
-            // own non-autoloaded option, but they are still declared in the
-            // registry, so get_all() returns their DEFAULT — an empty string —
-            // rather than omitting them. Without them on this list an export
-            // carried easyopt_cloud_key:"" and the import wrote that empty
-            // value straight through to put_secrets(), which treats empty as
+        // (2.8.0) One list. Everything in the credential store is on it by
+        // construction (the PSI key and the legacy FluxCDN licence were
+        // missing and rode out in every export), plus two non-secret
+        // connection details that still should not travel to a support inbox.
+        // react-src/app.tsx reads this list from window.__EASYOPT__.secretKeys.
+        return (array) apply_filters( 'easyopt_secret_setting_keys', array_values( array_unique( array_merge( EasyOpt_Config::secret_keys(), array(
+            // (2.6.1) Store credentials are still declared in the registry, so
+            // get_all() returns their DEFAULT — an empty string — rather than
+            // omitting them. Without them on this list an export carried
+            // easyopt_cloud_key:"" and the import wrote that empty value
+            // straight through to put_secrets(), which treats empty as
             // "delete": key, salt, token and the customer's LICENCE KEY were
-            // silently destroyed, while cloud_active/account/endpoint survived
-            // and left the panel claiming a connection that no longer existed.
+            // silently destroyed.
             //
             // Listed here they are neither exported nor accepted on import, so
             // put_secrets() keeps its delete-on-empty behaviour — which
             // disconnect() genuinely relies on to clear credentials.
-            'easyopt_cloud_key',
-            'easyopt_cloud_salt',
-            'easyopt_cloud_token',
-            'easyopt_cloud_license_key',
-        ) );
+        ) ) ) ) );
     }
 
     public static function settings_import( $request ) {

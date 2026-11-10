@@ -160,72 +160,6 @@
     text-transform: uppercase;
 }
 
-/* (2.6.5) Collapsible sidebar group — "Advanced" — ships closed so a fresh
-   install shows eight items instead of thirteen.
-
-   PROTOTYPE VARIANT A — a bordered, filled PILL, not a flat label. Earlier
-   cuts styled it as a section label that happened to toggle; users read it as
-   static text and never clicked. Real button chrome (border + surface fill)
-   makes it unmistakably a control and clearly distinct from the flat
-   SPEED / TOOLS labels above and below. A leading "layers" glyph anchors it;
-   the trailing chevron rotates on open. No item count — not wanted.
-
-   Selector stays .eop_wrap-qualified so it beats `.eop_wrap button` (0,1,1)
-   in the cascade; a bare class (0,1,0) would lose and inherit button `font`. */
-.eop_wrap .eop-nav__group-toggle {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    width: 100%;
-    margin: 14px 0 4px;
-    padding: 9px 10px;
-    border: 1px solid var(--eop-line);
-    border-radius: 8px;
-    background: var(--eop-surface-soft, #f7f8fa);
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 12px;
-    letter-spacing: .4px;
-    font-weight: 600;
-    line-height: 1;
-    text-transform: uppercase;
-    color: var(--eop-sub);
-    text-align: left;
-    transition: color .12s ease, border-color .12s ease, background-color .12s ease;
-}
-/* Hover lifts the whole pill toward the brand — it is a button, so the hover
-   affordance is the entire control, not just the text. */
-.eop_wrap .eop-nav__group-toggle:hover {
-    color: var(--eop-brand);
-    border-color: var(--eop-brand);
-    background: var(--eop-brand-soft, #eeebff);
-}
-.eop_wrap .eop-nav__group-toggle:focus-visible {
-    outline: 2px solid var(--eop-brand);
-    outline-offset: 2px;
-}
-.eop_wrap .eop-nav__group-toggle .eop-icon { flex: 0 0 auto; }
-/* Leading glyph — sized to the pill's 12px text, sits at the label's tone. */
-.eop_wrap .eop-nav__group-glyph {
-    width: 16px;
-    height: 16px;
-    opacity: .8;
-}
-/* Trailing chevron, pushed to the far edge; rotates a quarter-turn on open. */
-.eop-nav__group-text { flex: 1 1 auto; }
-.eop_wrap .eop-nav__group-chev {
-    width: 14px;
-    height: 14px;
-    margin-left: auto;
-    opacity: .7;
-    transition: transform .14s ease, opacity .12s ease;
-}
-.eop_wrap .eop-nav__group--collapsible.is-open .eop-nav__group-chev {
-    transform: rotate(90deg);
-}
-.eop_wrap .eop-nav__group-toggle:hover .eop-nav__group-glyph,
-.eop_wrap .eop-nav__group-toggle:hover .eop-nav__group-chev { opacity: 1; }
-
 .eop-nav__item,
 .eop_wrap .eop-tab.eop-nav__item {
     display: flex;
@@ -670,20 +604,11 @@
     margin: 0 !important;
 }
 .eop_wrap .easyopt-field-row > label > input[type="checkbox"] {
-    width: 32px;
-    height: 18px;
     margin: 2px 0 0;
     grid-column: 1;
     grid-row: 1;
     justify-self: start;
     align-self: start;
-}
-.eop_wrap .easyopt-field-row > label > input[type="checkbox"]::after {
-    width: 14px;
-    height: 14px;
-}
-.eop_wrap .easyopt-field-row > label > input[type="checkbox"]:checked::after {
-    left: 16px;
 }
 .eop_wrap .easyopt-field-row > label > strong {
     grid-column: 2;
@@ -1061,6 +986,7 @@
 .eop-badge-success { background: var(--eop-ok-soft);    color: var(--eop-ok-fg); }
 .eop-badge-info    { background: var(--eop-brand-soft); color: var(--eop-brand); }
 .eop-badge-muted   { background: var(--eop-line-soft);  color: var(--eop-sub); }
+.eop-badge-warning { background: var(--eop-warn-soft);  color: var(--eop-warn-fg); }
 
 .eop-icon { width: 16px; height: 16px; vertical-align: middle; }
 .eop-icon--sm { width: 12px; height: 12px; }
@@ -1106,19 +1032,8 @@
     font-weight: 500 !important;
     margin: 0 !important;
 }
-.eop_wrap .easyopt-db-row label > input[type="checkbox"] {
-    width: 32px;
-    height: 18px;
-}
-.eop_wrap .easyopt-db-row label > input[type="checkbox"]::after {
-    width: 14px;
-    height: 14px;
-}
-.eop_wrap .easyopt-db-row label > input[type="checkbox"]:checked::after {
-    left: 16px;
-}
 .eop_wrap .easyopt-db-row .description {
-    margin-left: 42px !important;
+    margin-left: 46px !important;
     font-size: 12.5px;
 }
 .eop_wrap .easyopt-db-count {
@@ -1418,18 +1333,6 @@
     .eop-nav { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 14px; }
     .eop-nav__group { margin-bottom: 0; display: contents; }
     .eop-nav__group-label { display: none; }
-    /* (2.6.5) …but NOT the collapsible group's toggle. Hiding it here would
-       leave the closed "Advanced" group with no way to open it and its five
-       items unreachable on small screens. Reset the vertical margins the pill
-       carries in the column layout and let it sit inline among the wrapped
-       nav items; the border/fill/chevron from the base rule carry over. */
-    .eop_wrap .eop-nav__group-toggle {
-        display: inline-flex;
-        width: auto;
-        flex: 0 0 auto;
-        margin: 0;
-        padding: 7px 12px;
-    }
     /* (2.5.1) Sidebar items are width:100% with a stretching label span —
        fine in a column, ugly when flex-wrapped. On small screens render
        them as compact pills that wrap evenly. */
@@ -2248,14 +2151,15 @@
 /* Feature-map toggle — a real switch, brand when on, frozen + locked when
    there is no account to enable it. */
 .eop_wrap .eop-flux-sw { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
-.eop_wrap .eop-flux-sw input { position: absolute; opacity: 0; width: 0; height: 0; }
+.eop_wrap .eop-flux-sw input[type="checkbox"] { position: absolute; opacity: 0; width: 0; height: 0; margin: 0; }
+.eop_wrap .eop-flux-sw input[type="checkbox"]::after { display: none; }
 .eop_wrap .eop-flux-sw__track {
-    width: 38px; height: 22px; border-radius: 999px; background: #cfd3dc;
+    width: 36px; height: 20px; border-radius: 999px; background: #cbd5e1;
     position: relative; transition: background .15s ease; flex: none;
 }
 .eop_wrap .eop-flux-sw__knob {
-    position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%;
-    background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: transform .15s ease;
+    position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+    background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.2); transition: transform .15s ease;
 }
 .eop_wrap .eop-flux-sw input:checked + .eop-flux-sw__track { background: var(--eop-brand, #5b4ed9); }
 .eop_wrap .eop-flux-sw input:checked + .eop-flux-sw__track .eop-flux-sw__knob { transform: translateX(16px); }
@@ -2365,4 +2269,365 @@
     .eop_wrap .eop-tiles { grid-template-columns: 1fr; }
     .eop_wrap .eop-cloudstats { grid-template-columns: repeat(2, 1fr); }
     .eop_wrap .eop-cloudhero--pitch { flex-wrap: wrap; }
+}
+
+/* ── Sections and settings cards (2.8.0) ─────────────────────────────── */
+.eop_wrap .eop-subtabs--page { margin-bottom: 14px; }
+.eop_wrap .eop-tab-desc {
+    margin: 0 0 14px;
+    max-width: 720px;
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--eop-sub);
+}
+.eop-nav__item .eop-navchip {
+    flex: 0 0 auto;
+    padding: 1px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 16px;
+    background: var(--eop-line-soft);
+    color: var(--eop-sub);
+}
+.eop-nav__item .eop-navchip--on { background: var(--eop-ok-soft); color: var(--eop-ok-fg); }
+
+.eop_wrap .eop-set {
+    margin: 0 0 12px;
+    padding: 20px 22px;
+    background: var(--eop-surf);
+    border: 1px solid var(--eop-line);
+    border-radius: 12px;
+    font-size: 13px;
+    color: var(--eop-ink);
+}
+.eop_wrap .eop-set__master { display: flex; align-items: flex-start; gap: 12px; }
+.eop_wrap .eop-set__head { flex: 1 1 auto; min-width: 0; }
+.eop_wrap .eop-set__title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2px 8px;
+    margin: 0;
+    font-family: var(--eop-font);
+    font-size: 16px;
+    font-weight: 700;
+    line-height: 20px;
+    letter-spacing: -.005em;
+    color: var(--eop-ink);
+}
+.eop_wrap .eop-set__title label { margin: 0; font: inherit; color: inherit; cursor: pointer; }
+.eop_wrap .eop-set .eop-badge {
+    padding: 1px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 16px;
+    letter-spacing: 0;
+}
+.eop_wrap .eop-set__desc {
+    margin: 4px 0 0;
+    max-width: 680px;
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--eop-sub);
+}
+.eop_wrap .eop-set__rows { margin-top: 12px; }
+.eop_wrap .eop-set__rows--under {
+    margin-top: 14px;
+    padding: 2px 0 0;
+    border-top: 1px solid var(--eop-line-soft);
+}
+.eop_wrap .eop-set__child { margin-left: 48px; }
+.eop_wrap .eop-set__rows > :last-child { margin-bottom: 0; }
+
+/* Toggle rows: pill, then the label, with the text lined up under the label. */
+.eop_wrap .eop-set .easyopt-field-row:has(> label > input[type="checkbox"]) { display: block; padding: 12px 0; }
+.eop_wrap .eop-panel .eop-set .easyopt-field-row > label:has(> input[type="checkbox"]) {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin: 0 !important;
+}
+.eop_wrap .eop-set .easyopt-field-row > label > input[type="checkbox"] { margin: 0; }
+.eop_wrap .eop-set .easyopt-field-row > label > strong { font-size: 13.5px; line-height: 20px; min-width: 0; }
+.eop_wrap .eop-set .easyopt-field-row > label > strong .eop-badge { margin-left: 8px; vertical-align: 1px; }
+.eop_wrap .eop-set .easyopt-field-row:has(> label > input[type="checkbox"]) > .description {
+    margin: 3px 0 0 48px;
+    max-width: 680px;
+}
+.eop_wrap .eop-set .easyopt-field-row--disabled > label > strong { color: var(--eop-sub); }
+.eop_wrap .eop-caution {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin: 4px 0 0 48px;
+    max-width: 680px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: #92400e;
+}
+.eop_wrap .eop-caution .eop-icon { flex: 0 0 13px; width: 13px; height: 13px; margin-top: 3px; }
+
+/* Label on the left, control on the right. */
+.eop_wrap .eop-set .easyopt-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px 20px;
+    padding: 12px 0;
+}
+.eop_wrap .eop-set .easyopt-row > label { flex: 1 1 240px; min-width: 0; }
+.eop_wrap .eop-set .easyopt-row > select,
+.eop_wrap .eop-set .easyopt-row > input:not([type="number"]):not([type="checkbox"]) {
+    flex: 0 1 380px;
+    min-width: 200px;
+    max-width: 100%;
+    height: 38px;
+}
+.eop_wrap .eop-set .easyopt-row > input[type="number"] { flex: 0 0 120px; height: 38px; }
+.eop_wrap .eop-set .easyopt-row > .button-link { flex: 0 0 auto; margin-left: 0 !important; }
+.eop_wrap .eop-set .easyopt-row > p.description { flex: 1 1 100%; margin: 0; max-width: 680px; }
+
+/* Exclude lists: one list shows its help; a grid keeps it in the popup. */
+.eop_wrap .eop-set .easyopt-field-row > .easyopt-popup-field { margin-top: 8px; }
+.eop_wrap .eop-set .easyopt-popup-grid { margin: 12px 0 2px; }
+.eop_wrap .eop-set .eop-dep-warning { margin: 10px 0; }
+
+.eop_wrap .eop-set__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 10px;
+    padding: 12px 0 4px;
+}
+.eop_wrap .eop-set__actions + p.description { margin: 6px 0 0; }
+.eop_wrap .eop-set__meter {
+    height: 8px;
+    margin: 4px 0 8px;
+    border-radius: 999px;
+    background: var(--eop-line-soft);
+    overflow: hidden;
+}
+.eop_wrap .eop-set__meter span { display: block; height: 100%; background: var(--eop-ok, #10b981); }
+.eop_wrap .eop-set__chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.eop_wrap .eop-set__chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border: 1px solid var(--eop-line);
+    border-radius: 999px;
+    font-size: 12.5px;
+    color: var(--eop-sub);
+}
+.eop_wrap .eop-set__chip-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--eop-ok, #10b981); flex-shrink: 0; }
+
+/* "How does this work?" reads as a link inside a card, not as a boxed row. */
+.eop_wrap .eop-set .eop-collapsible { margin: 10px 0 0; border: 0; border-radius: 0; overflow: visible; }
+.eop_wrap .eop-set > .eop-collapsible { margin: 0; }
+.eop_wrap .eop-set .eop-collapsible__toggle {
+    width: auto;
+    padding: 4px 0;
+    background: transparent;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--eop-brand);
+}
+.eop_wrap .eop-set .eop-collapsible__toggle:hover { background: transparent; text-decoration: underline; }
+.eop_wrap .eop-set .eop-collapsible__body {
+    margin-top: 6px;
+    padding: 12px 14px;
+    background: var(--eop-page);
+    border: 1px solid var(--eop-line-soft);
+    border-radius: 10px;
+}
+
+/* What happens to your scripts */
+.eop_wrap .eop-flow {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+    gap: 8px;
+}
+.eop_wrap .eop-flow__step {
+    padding: 12px 14px;
+    background: var(--eop-page);
+    border: 1px solid var(--eop-line-soft);
+    border-radius: 10px;
+}
+.eop_wrap .eop-flow__who { font-size: 12.5px; color: var(--eop-sub); }
+.eop_wrap .eop-flow__tag {
+    display: inline-block;
+    margin: 6px 0;
+    padding: 1px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 18px;
+}
+.eop_wrap .eop-flow__tag--delayed { background: var(--eop-brand-soft); color: var(--eop-brand-deep, #4a3fc4); }
+.eop_wrap .eop-flow__tag--deferred { background: var(--eop-ok-soft); color: var(--eop-ok-fg); }
+.eop_wrap .eop-flow__tag--normal { background: var(--eop-line-soft); color: var(--eop-sub); }
+.eop_wrap .eop-flow__what { line-height: 1.5; color: var(--eop-ink); }
+
+/* One-click exclusions */
+.eop_wrap .eop-oneclick { padding: 12px 0; border-bottom: 1px solid var(--eop-line-soft); }
+.eop_wrap .eop-oneclick__head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+    color: var(--eop-ink);
+}
+.eop_wrap .eop-oneclick__head { flex-wrap: wrap; }
+.eop_wrap .eop-oneclick__head strong { font-size: 15px; font-weight: 600; line-height: 22px; white-space: nowrap; }
+.eop_wrap .eop-oneclick__head .eop-badge { white-space: nowrap; }
+.eop_wrap .eop-oneclick__head .eop-icon { margin-left: auto; color: var(--eop-sub); }
+.eop_wrap .eop-oneclick > .description { margin: 8px 0 0; max-width: 680px; }
+.eop_wrap .eop-oneclick > .easyopt-field-row { margin-top: 12px; }
+/* These are sub-options of Delay, so their switches are a size down. */
+.eop_wrap .eop-panel .eop-oneclick input[type="checkbox"] { width: 28px; height: 16px; }
+.eop_wrap .eop-panel .eop-oneclick input[type="checkbox"]::after { width: 12px; height: 12px; }
+.eop_wrap .eop-panel .eop-oneclick input[type="checkbox"]:checked::after { left: 14px; }
+.eop_wrap .eop-panel .eop-set .eop-oneclick > .easyopt-field-row > label:has(> input[type="checkbox"]) { align-items: center; gap: 10px; }
+.eop_wrap .eop-set .eop-oneclick > .easyopt-field-row > label > strong { font-size: 13px; font-weight: 500; }
+.eop_wrap .eop-set .eop-oneclick > .easyopt-field-row:has(> label > input[type="checkbox"]) > .description { margin-left: 38px; }
+.eop_wrap .eop-oneclick__group { margin-top: 12px; }
+.eop_wrap .eop-oneclick__group--fold { border: 1px solid var(--eop-line); border-radius: 8px; }
+.eop_wrap .eop-oneclick__group--fold .eop-oneclick__grid { padding: 0 12px 8px; }
+.eop_wrap .eop-oneclick__fold {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    min-height: 38px;
+    padding: 0 12px;
+    border: 0;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+    color: var(--eop-ink);
+}
+.eop_wrap .eop-oneclick__fold .eop-oneclick__label { margin-bottom: 0; }
+.eop_wrap .eop-oneclick__fold .eop-icon { margin-left: auto; color: var(--eop-sub); }
+.eop_wrap .eop-oneclick__label {
+    margin-bottom: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    color: var(--eop-sub);
+}
+.eop_wrap .eop-oneclick__grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
+    gap: 0 12px;
+}
+.eop_wrap .eop-panel .eop-oneclick__grid label:has(> input[type="checkbox"]) {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 32px;
+    margin: 0;
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--eop-ink);
+}
+
+@media (max-width: 700px) {
+    .eop_wrap .eop-set { padding: 16px; }
+    .eop_wrap .eop-set__child { margin-left: 16px; }
+    .eop_wrap .eop-oneclick__head strong { font-size: 14px; }
+    .eop_wrap .eop-set .easyopt-row > select,
+    .eop_wrap .eop-set .easyopt-row > input:not([type="number"]):not([type="checkbox"]) { flex: 1 1 100%; min-width: 0; width: 100%; }
+    .eop_wrap .eop-subtabs--page { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .eop_wrap .eop-subtabs--page .eop-subtab { flex: 0 0 auto; padding: 10px 12px; white-space: nowrap; }
+}
+
+/* Backend's five tabs need 848px, and a laptop inside wp-admin has 725px to 811px.
+   Tighten that row only, so one tab isn't left alone on a second line. */
+@media (min-width: 701px) and (max-width: 1439px) {
+    .eop_wrap .eop-subtabs--page:has(.eop-subtab:nth-child(5)) { gap: 0; }
+    .eop_wrap .eop-subtabs--page:has(.eop-subtab:nth-child(5)) .eop-subtab { gap: 5px; padding: 10px 11px; font-size: 12.5px; white-space: nowrap; }
+}
+
+/* "Cloud Optimization", its chip and the active dot don't fit on one line in
+   the 240px sidebar, and the chip already marks this row out. */
+.eop_wrap .eop-tab.eop-nav__item:has(.eop-navchip)::after { display: none; }
+.eop_wrap .eop-tab.eop-nav__item:has(.eop-navchip) > span:not(.eop-navchip) { white-space: nowrap; }
+/* Three-level crumbs plus the top bar's buttons overflow onto a second row on a
+   laptop inside wp-admin. The plugin's name is beside them in the sidebar. */
+@media (min-width: 901px) and (max-width: 1440px) {
+    .eop-crumbs:has(> :nth-child(5)) > :nth-child(-n+2) { display: none; }
+}
+
+/* Speed test and URL Inspector rows, which stack on a phone. */
+.eop-psi-rings { display: flex; align-items: center; gap: 18px; margin-bottom: 18px; }
+.eop-psi-vitals {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    padding: 12px 14px;
+    background: var(--eop-bg-alt, #fafafb);
+    border: 1px solid var(--eop-border, #e3e5e8);
+    border-radius: 10px;
+}
+.eop-inspect-row {
+    display: grid;
+    grid-template-columns: 190px 1fr;
+    gap: 10px;
+    padding: 9px 0;
+    border-top: 1px solid var(--eop-border-soft, #eceef1);
+}
+@media (max-width: 700px) {
+    .eop-psi-rings { flex-direction: column; align-items: stretch; gap: 22px; }
+    .eop-psi-vitals { grid-template-columns: 1fr; }
+    .eop-inspect-row { grid-template-columns: 1fr; gap: 2px; }
+    .eop_wrap .eop-panel:not(.eop-panel--cards) { padding: 18px 16px; }
+}
+
+/* The cloud bar's message and buttons take a line each on a phone. */
+@media (max-width: 700px) {
+    .eop_wrap .eop-cloudbar { flex-wrap: wrap; }
+    .eop_wrap .eop-cloudbar > span:not([class]) { display: none; }
+    .eop_wrap .eop-cloudbar__pitch,
+    .eop_wrap .eop-cloudbar__note { flex-basis: 100%; }
+}
+
+/* One white box per section page: title, tabs and content together. Panels
+   that draw their own box on the Dashboard and Cloud pages give it up here. */
+.eop_wrap .eop-page {
+    margin-bottom: 12px;
+    padding: 22px 24px;
+    background: var(--eop-surf);
+    border: 1px solid var(--eop-line);
+    border-radius: var(--eop-r);
+}
+.eop_wrap .eop-page .eop-page-header { margin-bottom: 14px; }
+.eop_wrap .eop-page > .eop-panel {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+}
+.eop_wrap .eop-page > .eop-panel > :last-child { margin-bottom: 0; }
+/* Tabs inside a page's tab: the same design, one size smaller. */
+.eop_wrap .eop-page > .eop-panel .eop-subtabs { border-bottom-width: 1px; }
+.eop_wrap .eop-page > .eop-panel .eop-subtab { padding: 8px 14px; font-size: 12.5px; margin-bottom: -1px; }
+.eop_wrap .eop-set__top {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px 12px;
+}
+@media (max-width: 700px) {
+    .eop_wrap .eop-page { padding: 16px 12px; }
+    .eop_wrap .eop-set { padding: 14px 12px; }
 }

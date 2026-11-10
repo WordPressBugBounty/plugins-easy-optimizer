@@ -824,6 +824,12 @@ class EasyOpt_Queue {
             return;
         }
 
+        // (2.8.0) Keep the direct route to this server current before the
+        // dispatches below rely on it (one probe per 12 h at most).
+        if ( class_exists( 'EasyOpt_Loopback' ) ) {
+            EasyOpt_Loopback::refresh();
+        }
+
         $drain_deadline = microtime( true ) + self::INLINE_DRAIN_BUDGET_SECONDS;
 
         foreach ( (array) $rows as $row ) {
@@ -1615,7 +1621,12 @@ class EasyOpt_Queue {
 
     private static function dispatch_runner( $group, $callback ) {
         $url = rest_url( trim( self::REST_NAMESPACE, '/' ) . self::REST_ROUTE );
-        wp_remote_post( $url, array(
+        // (2.8.0) Through EasyOpt_Loopback, straight to this server when that
+        // route is proven: a dispatch a CDN challenges or drops leaves the
+        // queue with nobody working it, and WordPress reports no error for a
+        // non-blocking request.
+        $post = class_exists( 'EasyOpt_Loopback' ) ? array( 'EasyOpt_Loopback', 'post' ) : 'wp_remote_post';
+        call_user_func( $post, $url, array(
             'timeout'   => 0.01,
             'blocking'  => false,
             'sslverify' => false,

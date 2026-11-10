@@ -835,7 +835,7 @@ trait EasyOpt_Cache_Htaccess_Trait {
         // key a filename on a cookie VALUE, so those requests deliberately
         // fall through to the PHP drop-in, which does vary the cache file by
         // cookie value via easyopt_cache_include_cookies.
-        $shared  = "RewriteCond %{HTTP:Cookie} !(easyopt_skip_cache|wordpress_logged_in_|wordpress_sec_|comment_author_|edd_items_in_cart|wp-postpass_|pll_language|wp-wpml_current_language|_icl_current_language) [NC]\n";
+        $shared  = "RewriteCond %{HTTP:Cookie} !(" . self::static_skip_cookie_pattern() . ") [NC]\n";
         $shared .= "RewriteCond %{REQUEST_METHOD} ^GET$\n";
         $shared .= "RewriteCond %{QUERY_STRING} ^$\n";
         // (2.6.1) %{HTTP_HOST} carries the port when the client sends one, but
@@ -853,14 +853,30 @@ trait EasyOpt_Cache_Htaccess_Trait {
         // sitemaps stay covered by the \.xml / \.txt tokens.
         $shared .= "RewriteCond %{REQUEST_URI} !(wp-admin|wp-login|wp-cron|xmlrpc|wp-json|/feed/|/sitemap(?:_index|s)?/?\$|\\.xml|\\.txt|/cart(?:/|\$)|/checkout(?:/|\$)|/my-account(?:/|\$)|/wc-api) [NC]\n";
 
-        // Mobile match — serve index-mobile.html(_gzip).
-        $rules .= $shared;
-        $rules .= "RewriteCond %{HTTP_USER_AGENT} (android.+mobile|avantgo|blackberry|blazer|compal|elaine|fennec|hiptop|iemobile|ip(hone|od)|iris|kindle|maemo|midp|mmp|mobile.+firefox|netfront|opera\\ m(ob|in)i|palm(\\ os)?|phone|p(ixi|re)\\/|plucker|pocket|psp|series(4|6)0|symbian|treo|up\\.(browser|link)|vodafone|wap|windows\\ (ce|phone)|xda|xiino) [NC]\n";
-        $rules .= "RewriteCond %{DOCUMENT_ROOT}/" . $cache_rel . "%{HTTP_HOST}%{REQUEST_URI}/index-mobile.html%{ENV:EASYOPT_ENC} -f\n";
-        $rules .= "RewriteRule .* /" . $cache_rel . "%{HTTP_HOST}%{REQUEST_URI}/index-mobile.html%{ENV:EASYOPT_ENC} [L]\n";
+        // (2.8.0) The device test is the writer's own (is_mobile_ua(): "Mobi",
+        // case-sensitive, or the legacy list). The desktop rule used to have
+        // no device condition, so a phone whose mobile file was not written
+        // yet was served the desktop file, and the mobile rule used a
+        // different list from the writer's. Now each rule serves only the file
+        // the writer stores for that visitor; anything else goes to PHP.
+        $separate_mobile = (int) EasyOpt_Config::get( 'cache_separate_mobile', 1 );
+        $mobile_ua       = str_replace( ' ', '\\ ', \EasyOpt\Cache\mobile_ua_legacy_pattern() );
+
+        if ( $separate_mobile ) {
+            // Mobile match — serve index-mobile.html(_gzip).
+            $rules .= $shared;
+            $rules .= "RewriteCond %{HTTP_USER_AGENT} Mobi [OR]\n";
+            $rules .= "RewriteCond %{HTTP_USER_AGENT} " . $mobile_ua . " [NC]\n";
+            $rules .= "RewriteCond %{DOCUMENT_ROOT}/" . $cache_rel . "%{HTTP_HOST}%{REQUEST_URI}/index-mobile.html%{ENV:EASYOPT_ENC} -f\n";
+            $rules .= "RewriteRule .* /" . $cache_rel . "%{HTTP_HOST}%{REQUEST_URI}/index-mobile.html%{ENV:EASYOPT_ENC} [L]\n";
+        }
 
         // Desktop match — serve index.html(_gzip).
         $rules .= $shared;
+        if ( $separate_mobile ) {
+            $rules .= "RewriteCond %{HTTP_USER_AGENT} !Mobi\n";
+            $rules .= "RewriteCond %{HTTP_USER_AGENT} !" . $mobile_ua . " [NC]\n";
+        }
         $rules .= "RewriteCond %{DOCUMENT_ROOT}/" . $cache_rel . "%{HTTP_HOST}%{REQUEST_URI}/index.html%{ENV:EASYOPT_ENC} -f\n";
         $rules .= "RewriteRule .* /" . $cache_rel . "%{HTTP_HOST}%{REQUEST_URI}/index.html%{ENV:EASYOPT_ENC} [L]\n";
 
@@ -876,6 +892,57 @@ trait EasyOpt_Cache_Htaccess_Trait {
      * guarded by mod_filter (Apache 2.4 correct module). Sandbox-probed and
      * skipped on OpenLiteSpeed by the caller.
      */
+    /**
+     * (2.8.0) Cookie alternation for the static-serve rules (.htaccess and the
+     * Nginx snippet). It used to be a hardcoded list, so a cookie added under
+     * "Never cache for these cookies" was honoured by the PHP drop-in but not
+     * by Apache/Nginx, which kept serving the static page to exactly the
+     * visitors the user meant to exclude.
+     *
+     * Entries match as case-insensitive substrings of the Cookie header, like
+     * the drop-in's stripos() on cookie names. Every character outside
+     * [A-Za-z0-9_-] becomes '.', so nothing a user types can end the
+     * directive, open a regex group or break the Nginx quoting. That can only
+     * make the pattern broader, and a broader skip just hands the request to
+     * the PHP drop-in, which applies the exact check.
+     *
+     * @return string Regex alternation without the surrounding parentheses.
+     */
+    private static function static_skip_cookie_pattern() {
+        $names = array(
+            'easyopt_skip_cache', 'wordpress_logged_in_', 'wordpress_sec_', 'comment_author_',
+            'edd_items_in_cart', 'wp-postpass_',
+            // Language cookies: see the multilingual note in build_rewrite_section().
+            'pll_language', 'wp-wpml_current_language', '_icl_current_language',
+        );
+        if ( method_exists( __CLASS__, 'get_cookie_exclusions' ) ) {
+            $names = array_merge( $names, (array) self::get_cookie_exclusions() );
+        }
+        // get_cookie_exclusions() memoises per request; read the user's list
+        // fresh too, since the rules are rewritten in the same request as the
+        // save that changed it.
+        $names = array_merge( $names, explode( "\n", (string) EasyOpt_Config::get( 'cache_exclude_cookies', '' ) ) );
+        $out  = array();
+        $seen = array();
+        foreach ( $names as $name ) {
+            $name = trim( (string) $name );
+            if ( '' === $name ) {
+                continue;
+            }
+            $part = preg_replace( '/[^A-Za-z0-9_\-]/', '.', $name );
+            $key  = strtolower( $part );
+            if ( isset( $seen[ $key ] ) ) {
+                continue;
+            }
+            $seen[ $key ] = true;
+            $out[]        = $part;
+            if ( count( $out ) >= 100 ) {
+                break;
+            }
+        }
+        return implode( '|', $out );
+    }
+
     private static function build_gzip_section() {
 
         $b  = "# ── Gzip Compression ──\n";
@@ -1120,7 +1187,7 @@ trait EasyOpt_Cache_Htaccess_Trait {
         $n .= "# Never serve a cached page to a request that carries state.\n";
         $n .= "if (\$request_method != GET) { set \$easyopt_skip 1; }\n";
         $n .= "if (\$query_string != \"\") { set \$easyopt_skip 1; }\n";
-        $n .= "if (\$http_cookie ~* \"(easyopt_skip_cache|wordpress_logged_in_|wordpress_sec_|comment_author_|edd_items_in_cart|wp-postpass_|pll_language|wp-wpml_current_language|_icl_current_language)\") { set \$easyopt_skip 1; }\n";
+        $n .= "if (\$http_cookie ~* \"(" . self::static_skip_cookie_pattern() . ")\") { set \$easyopt_skip 1; }\n";
         $n .= "if (\$request_uri ~* \"(/wp-admin|/wp-login|/wp-cron|/xmlrpc|/wp-json|/feed/|/cart/|/checkout/|/my-account/|/wc-api)\") { set \$easyopt_skip 1; }\n\n";
 
         // (2.6.1) Honour cache_separate_mobile. The mobile branch was emitted
@@ -1132,7 +1199,9 @@ trait EasyOpt_Cache_Htaccess_Trait {
         $n .= "# Mobile pages are cached separately.\n";
         $n .= "set \$easyopt_device \"\";\n";
         if ( (int) EasyOpt_Config::get( 'cache_separate_mobile', 1 ) ) {
-            $n .= "if (\$http_user_agent ~* \"(android.+mobile|blackberry|iemobile|ip(hone|od)|opera m(ob|in)i|mobile.+firefox|windows (ce|phone)|palm|symbian)\") { set \$easyopt_device \"-mobile\"; }\n";
+            // (2.8.0) Same test as the writer (is_mobile_ua()), as in .htaccess.
+            $n .= "if (\$http_user_agent ~ \"Mobi\") { set \$easyopt_device \"-mobile\"; }\n";
+            $n .= "if (\$http_user_agent ~* \"" . \EasyOpt\Cache\mobile_ua_legacy_pattern() . "\") { set \$easyopt_device \"-mobile\"; }\n";
         } else {
             $n .= "# (Separate Mobile Cache is off — one file serves both.)\n";
         }

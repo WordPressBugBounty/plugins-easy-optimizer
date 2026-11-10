@@ -47,8 +47,10 @@ class EasyOpt_Cloudflare {
         // would no-op on every event anyway; skip registering them. Gated on
         // the presence of a token/zone (not just cf_enabled) so a mid-request
         // enable via settings save still finds the listeners registered.
-        if ( '' === (string) EasyOpt_Config::get( 'cf_api_token', '' )
-            && '' === (string) EasyOpt_Config::get( 'cf_zone_id', '' ) ) {
+        // (2.8.0) Zone first: the token now lives in the non-autoloaded
+        // credential store, and reading it costs a query on every uncached
+        // request. Without a zone there is nothing to purge either way.
+        if ( '' === (string) EasyOpt_Config::get( 'cf_zone_id', '' ) ) {
             return;
         }
 

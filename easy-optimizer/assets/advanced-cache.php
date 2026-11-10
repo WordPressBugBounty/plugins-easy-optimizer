@@ -152,11 +152,15 @@ if ( $easyopt_logged_in && empty( $easyopt_cfg['cache_logged_in'] ) ) {
 }
 if ( $easyopt_logged_in && ! empty( $easyopt_cfg['cache_logged_in'] ) ) {
     // Role tag is provided to us by the runtime side via a non-auth cookie.
-    if ( isset( $_COOKIE['easyopt_user_role'] ) ) {
-        $easyopt_role_tag = preg_replace( '/[^a-z0-9_\-]/i', '', (string) $_COOKIE['easyopt_user_role'] );
+    // (2.8.0) Only a signed one counts: the plain value let anyone read the
+    // copy cached for another role or user. Unsigned, forged or stale → MISS,
+    // and the runtime sets a fresh cookie.
+    if ( ! function_exists( '\\EasyOpt\\Cache\\verified_logged_in_tag' ) ) {
+        return false;
     }
+    $easyopt_li_secret = isset( $easyopt_cfg['li_secret'] ) ? (string) $easyopt_cfg['li_secret'] : '';
+    $easyopt_role_tag  = \EasyOpt\Cache\verified_logged_in_tag( $_COOKIE, $easyopt_li_secret );
     if ( '' === $easyopt_role_tag ) {
-        // Logged in but role unknown yet → MISS, runtime will set the cookie.
         return false;
     }
 }
@@ -214,7 +218,7 @@ $easyopt_clean_path = \EasyOpt\Cache\path_segments( $easyopt_path );
 
 $easyopt_filename  = 'index';
 if ( $easyopt_logged_in ) {
-    $easyopt_filename .= '-logged-in-' . $easyopt_role_tag;
+    $easyopt_filename .= '-logged-in-' . \EasyOpt\Cache\logged_in_file_tag( $easyopt_role_tag, $easyopt_li_secret );
 }
 if ( $easyopt_extra_tag ) {
     $easyopt_filename .= $easyopt_extra_tag;

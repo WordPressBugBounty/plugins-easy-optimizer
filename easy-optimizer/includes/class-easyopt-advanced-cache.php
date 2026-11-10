@@ -930,6 +930,9 @@ class EasyOpt_Advanced_Cache {
             'is_ols'              => ( class_exists( 'EasyOpt_Cache' ) && method_exists( 'EasyOpt_Cache', 'is_openlitespeed' ) )
                                      ? (int) EasyOpt_Cache::is_openlitespeed() : 0,
             'cache_logged_in'     => (int) EasyOpt_Config::get( 'cache_logged_in', 0 ),
+            // (2.8.0) Verifies the signed role cookie and names logged-in files.
+            'li_secret'           => ( 1 === (int) EasyOpt_Config::get( 'cache_logged_in', 0 ) && class_exists( 'EasyOpt_Cache' ) )
+                                     ? EasyOpt_Cache::logged_in_secret() : '',
             'cdn_max_age'         => (int) apply_filters( 'easyopt_cache_cdn_max_age', 2592000 ), // 30 days
             'exclude_urls'        => $exclude_urls,
             'exclude_cookies'     => $exclude_cookies,

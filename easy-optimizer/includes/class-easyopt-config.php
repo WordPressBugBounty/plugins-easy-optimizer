@@ -51,14 +51,63 @@ class EasyOpt_Config {
      */
     const SECRETS_OPTION = 'easyopt_cloud_secrets';
 
-    /** Full option names held in SECRETS_OPTION rather than STORAGE_OPTION. */
+    /**
+     * Full option names held in SECRETS_OPTION rather than STORAGE_OPTION.
+     *
+     * (2.8.0) Every credential lives here now, not just the cloud four: the
+     * Cloudflare token, the Redis password, the legacy FluxCDN key + licence
+     * and the PageSpeed API key were still autoloaded on every front-end
+     * request and shipped to the admin browser in the settings payload. The
+     * option keeps its 2.6.1 name so existing installs need no rename.
+     */
     public static function secret_keys() {
         return array(
             'easyopt_cloud_key',
             'easyopt_cloud_salt',
             'easyopt_cloud_token',
             'easyopt_cloud_license_key',
+            'easyopt_cf_api_token',
+            'easyopt_oc_password',
+            'easyopt_fluxcdn_api_key',
+            'easyopt_fluxcdn_license_key',
+            'easyopt_psi_api_key',
         );
+    }
+
+    /**
+     * (2.8.0) What the admin UI may know about each stored credential: that
+     * it is set, plus a masked hint so the field can say "saved (…ab12)".
+     * The values themselves never leave the server — the fields are
+     * write-only. Unset credentials are absent from the map.
+     *
+     * @return array<string,string> full key => masked hint
+     */
+    public static function secret_hints() {
+        $out = array();
+        foreach ( self::secrets() as $k => $v ) {
+            $v = (string) $v;
+            if ( '' === $v || ! self::is_secret_key( $k ) ) {
+                continue;
+            }
+            if ( 'easyopt_fluxcdn_api_key' === $k && false !== strpos( $v, '.' ) ) {
+                // fpcdn_{account}.{key}.{salt} — the account part is not
+                // secret and the legacy panel displays it.
+                $out[ $k ] = substr( $v, 0, (int) strpos( $v, '.' ) ) . '.…' . substr( $v, -4 );
+            } elseif ( 'easyopt_oc_password' === $k || strlen( $v ) < 12 ) {
+                $out[ $k ] = '••••';
+            } else {
+                $out[ $k ] = '••••' . substr( $v, -4 );
+            }
+        }
+        return $out;
+    }
+
+    /** (2.8.0) Drop credential keys from a settings array (snapshots, restores). */
+    public static function without_secrets( array $settings ) {
+        foreach ( self::secret_keys() as $k ) {
+            unset( $settings[ $k ] );
+        }
+        return $settings;
     }
 
     public static function is_secret_key( $full_option_name ) {
@@ -84,23 +133,26 @@ class EasyOpt_Config {
         }
 
         $store = get_option( self::SECRETS_OPTION, null );
-        if ( is_array( $store ) ) {
-            $memo = $store;
-            return $memo;
-        }
 
-        // First run after upgrade — lift whatever is in the old blob.
+        // Lift whatever credential is still in the old blob. On a pre-2.6.1
+        // install that is all of them; on a 2.6.1–2.7.x install the store
+        // already exists and only the keys added in 2.8.0 are still in the
+        // blob. A value already in the store wins over a stale blob copy.
         $legacy  = self::raw_settings();
-        $moved   = array();
+        $moved   = is_array( $store ) ? $store : array();
         $residue = $legacy;
         foreach ( self::secret_keys() as $k ) {
-            if ( isset( $legacy[ $k ] ) && '' !== (string) $legacy[ $k ] ) {
+            if ( ! isset( $moved[ $k ] ) && isset( $legacy[ $k ] ) && '' !== (string) $legacy[ $k ] ) {
                 $moved[ $k ] = (string) $legacy[ $k ];
             }
             unset( $residue[ $k ] );
         }
 
-        add_option( self::SECRETS_OPTION, $moved, '', false );
+        if ( ! is_array( $store ) ) {
+            add_option( self::SECRETS_OPTION, $moved, '', false );
+        } elseif ( $moved !== $store ) {
+            update_option( self::SECRETS_OPTION, $moved, false );
+        }
         if ( $residue !== $legacy ) {
             update_option( self::STORAGE_OPTION, $residue );
         }
@@ -344,6 +396,7 @@ class EasyOpt_Config {
      */
     public static function update_many( array $changes ) {
         $old        = self::get_all();
+        $changes    = self::translate_legacy_js_method( $changes, $old );
         $sanitised  = array();
 
         foreach ( $changes as $key => $raw ) {
@@ -432,6 +485,71 @@ class EasyOpt_Config {
         do_action( self::ACTION_SAVED, $new, $old, $changed );
 
         return $changed;
+    }
+
+    /**
+     * (2.8.0) Delay JS and Defer JS are separate engines. Up to 2.7.x, Defer
+     * was "Delay JS on, method = defer" and shared Delay's exclusion list.
+     * Translate that shape wherever it arrives — the stored settings on
+     * update, an old export file, a preset filter, a Cloud connect — so the
+     * site keeps doing exactly what it did: Defer alone, same exclusions.
+     *
+     * @param array $changes Incoming key => value pairs.
+     * @param array $current Current settings (get_all()).
+     * @return array
+     */
+    public static function translate_legacy_js_method( array $changes, array $current ) {
+        if ( ! isset( $changes['easyopt_delay_js_method'] ) || 'defer' !== $changes['easyopt_delay_js_method'] ) {
+            return $changes;
+        }
+        $on = array_key_exists( 'easyopt_delay_js', $changes )
+            ? (int) $changes['easyopt_delay_js']
+            : (int) ( isset( $current['easyopt_delay_js'] ) ? $current['easyopt_delay_js'] : 0 );
+
+        $changes['easyopt_delay_js_method'] = 'delay';
+        $changes['easyopt_delay_js']        = 0;
+        if ( ! array_key_exists( 'easyopt_defer_js', $changes ) ) {
+            $changes['easyopt_defer_js'] = $on ? 1 : 0;
+        }
+        if ( ! array_key_exists( 'easyopt_defer_js_exclude', $changes ) ) {
+            $changes['easyopt_defer_js_exclude'] = array_key_exists( 'easyopt_delay_js_exclude', $changes )
+                ? $changes['easyopt_delay_js_exclude']
+                : ( isset( $current['easyopt_delay_js_exclude'] ) ? $current['easyopt_delay_js_exclude'] : '' );
+        }
+        return $changes;
+    }
+
+    /**
+     * (2.8.0) One-time: persist the translation above for a site whose stored
+     * settings still say method = defer. Run from easyopt_finalize_install().
+     * Until it runs, js_delay_on() / js_defer_on() read the old shape.
+     */
+    public static function migrate_legacy_js_method() {
+        $raw = self::raw_settings();
+        if ( isset( $raw['easyopt_delay_js_method'] ) && 'defer' === $raw['easyopt_delay_js_method'] ) {
+            self::update_many( array( 'easyopt_delay_js_method' => 'defer' ) );
+        }
+    }
+
+    /** (2.8.0) Is the Delay JS engine on? Honours a not-yet-migrated method = defer. */
+    public static function js_delay_on() {
+        return 1 === (int) self::get( 'delay_js', 0 ) && 'defer' !== self::get( 'delay_js_method', 'delay' );
+    }
+
+    /** (2.8.0) Is the Defer JS engine on? Honours a not-yet-migrated method = defer. */
+    public static function js_defer_on() {
+        if ( 1 === (int) self::get( 'defer_js', 0 ) ) {
+            return true;
+        }
+        return 1 === (int) self::get( 'delay_js', 0 ) && 'defer' === self::get( 'delay_js_method', 'delay' );
+    }
+
+    /** (2.8.0) Defer's exclusion list, falling back to Delay's for a not-yet-migrated site. */
+    public static function defer_js_exclude() {
+        if ( 'defer' === self::get( 'delay_js_method', 'delay' ) && '' === trim( (string) self::get( 'defer_js_exclude', '' ) ) ) {
+            return (string) self::get( 'delay_js_exclude', '' );
+        }
+        return (string) self::get( 'defer_js_exclude', '' );
     }
 
     /**

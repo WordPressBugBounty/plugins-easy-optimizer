@@ -345,7 +345,9 @@ class EasyOpt_LCP {
             // collection until every cached page happened to re-render. Accept
             // for one release, then remove — it is what let a token lifted from
             // any page authorise writes for every page of that type.
-            if ( (bool) apply_filters( 'easyopt_beacon_accept_legacy_token', true )
+            // (2.8.0) Off by default now; 2.5.x pages are long out of every
+            // cache. The filter stays as an escape hatch.
+            if ( (bool) apply_filters( 'easyopt_beacon_accept_legacy_token', false )
                 && hash_equals( self::build_beacon_token( $url_type, '' ), $token ) ) {
                 return true;
             }
@@ -1105,6 +1107,25 @@ class EasyOpt_LCP {
         set_transient( $cache_key, $rows, DAY_IN_SECONDS );
         $req_cache[ $url_hash ] = $rows;
         return $rows;
+    }
+
+    /**
+     * (2.8.0) Measured LCP rows for any URL (URL Inspector). Empty when the
+     * table was never installed or the beacon has not measured it yet.
+     *
+     * @param string $url Absolute URL.
+     * @return array
+     */
+    public static function rows_for_url( $url ) {
+        if ( self::DB_VERSION !== get_option( 'easyopt_lcp_db_version' ) ) {
+            return array();
+        }
+        if ( empty( self::$table ) ) {
+            global $wpdb;
+            self::$table = $wpdb->prefix . 'easyopt_lcp';
+        }
+        $norm = self::normalize_url( $url );
+        return '' === $norm ? array() : self::get_cache_rows( md5( $norm ) );
     }
 
     /** Drop the cached rows for a single URL hash. Called on row writes / clears. */

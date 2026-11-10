@@ -374,8 +374,10 @@ class EasyOpt_Minify {
             'lazyload.min.js',
             'easyopt-lazysizes',
         );
-        // Reuse the Delay-JS "Exclude Scripts" field, as requested.
-        $user = (string) EasyOpt_Config::get( 'delay_js_exclude', '' );
+        // Reuse the Delay-JS "Exclude Scripts" field, as requested — and, since
+        // 2.8.0, Defer's own list too, so a script excluded there is not
+        // minified either.
+        $user = (string) EasyOpt_Config::get( 'delay_js_exclude', '' ) . "\n" . (string) EasyOpt_Config::get( 'defer_js_exclude', '' );
         if ( '' !== $user ) {
             $list = array_merge( $list, array_filter( array_map( 'trim', preg_split( '/\r\n|\r|\n/', $user ) ) ) );
         }

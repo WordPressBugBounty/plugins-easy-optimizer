@@ -12,6 +12,7 @@
  *   POST /easyopt/v1/cloud/disconnect
  *   GET  /easyopt/v1/cloud/usage
  *   POST /easyopt/v1/cloud/upgrade
+ *   POST /easyopt/v1/cloud/trial-started  remember a trial awaiting its key
  *
  * Every route requires manage_options — these are wp-admin actions, not
  * public endpoints.
@@ -33,6 +34,12 @@ class EasyOpt_REST_Cloud {
 	/** Refuse to measure originals larger than this — an outlier would
 	 *  dominate the "before" number and imgproxy will refuse them anyway. */
 	const MAX_SRC_BYTES = 10485760;
+
+	/** (2.7.6) A trial started from the panel whose licence key is not pasted yet. */
+	const PENDING_OPTION = 'easyopt_cloud_trial_pending';
+
+	/** Stop showing the pending state once the trial itself would be over. */
+	const PENDING_TTL = 14 * DAY_IN_SECONDS;
 
 	public static function register() {
 		add_action( 'rest_api_init', array( __CLASS__, 'routes' ) );
@@ -156,6 +163,7 @@ class EasyOpt_REST_Cloud {
 			'upgrade'    => 'upgrade',
 			'refresh'    => 'refresh',
 			'resend'     => 'resend',
+			'trial-started' => 'trial_started',
 		) as $route => $fn ) {
 			register_rest_route( self::NS, '/cloud/' . $route, array(
 				'methods'  => 'POST',
@@ -903,6 +911,48 @@ class EasyOpt_REST_Cloud {
 	}
 
 	/* ─────────────────────────────────────────────
+	 *  Trial started, key not pasted yet
+	 * ───────────────────────────────────────────── */
+
+	/**
+	 * (2.7.6) Remember that this site started a trial from the panel.
+	 *
+	 * The Freemius overlay never hands the licence key to the browser, so after
+	 * "Start trial" the customer has to fetch it from their email. The panel
+	 * used to say so in one line of text that a reload wiped, and a closed tab
+	 * brought back the sales pitch — the step where trials were lost. Storing
+	 * it here lets the Cloud tab and bar keep asking for the key, with the
+	 * address it went to, until it is pasted or the trial would have run out.
+	 */
+	public static function trial_started( WP_REST_Request $req ) {
+		$email = sanitize_email( (string) $req->get_param( 'email' ) );
+		update_option( self::PENDING_OPTION, array(
+			'email' => is_email( $email ) ? $email : '',
+			'at'    => time(),
+		), false );
+		return rest_ensure_response( array(
+			'success'       => true,
+			'trial_pending' => self::trial_pending(),
+		) );
+	}
+
+	/** The pending trial, or null when connected, never started or too old. */
+	private static function trial_pending() {
+		$p = get_option( self::PENDING_OPTION );
+		if ( ! is_array( $p ) || EasyOpt_CDN_Cloud::is_connected() ) {
+			return null;
+		}
+		if ( time() - (int) ( $p['at'] ?? 0 ) > self::PENDING_TTL ) {
+			delete_option( self::PENDING_OPTION );
+			return null;
+		}
+		return array(
+			'email' => (string) ( $p['email'] ?? '' ),
+			'at'    => (int) $p['at'],
+		);
+	}
+
+	/* ─────────────────────────────────────────────
 	 *  Connect an existing licence
 	 * ───────────────────────────────────────────── */
 
@@ -1056,6 +1106,8 @@ class EasyOpt_REST_Cloud {
 		// its admin notice disappear the moment a valid licence is connected again.
 		delete_option( 'easyopt_cloud_revoked' );
 		delete_option( 'easyopt_cloud_revoked_dismissed' );
+		// (2.7.6) The key is in, so stop asking for it.
+		delete_option( self::PENDING_OPTION );
 
 		// (2.7.1) Force the connected-account optimization set ON, every connect,
 		// regardless of prior state. A connected account is opting into the whole
@@ -1072,6 +1124,7 @@ class EasyOpt_REST_Cloud {
 			'easyopt_delay_js'                => 1,        // JavaScript Optimization…
 			'easyopt_delay_js_method'         => 'delay',  // …delay until interaction
 			'easyopt_delay_js_exclude_jquery' => 0,        // jQuery delayed too (best scores)
+			'easyopt_delay_js_external_only'  => 0,        // own scripts delayed too (best scores)
 			'easyopt_unused_css'              => 1,        // Unused CSS…
 			'easyopt_unused_css_behavior'     => 'delayed', // …delayed (not async/remove)
 			'easyopt_cloud_unused_css'        => 1,        // cloud (headless) Unused CSS
@@ -1162,6 +1215,7 @@ class EasyOpt_REST_Cloud {
 			'usage'       => is_array( $u ) ? $u : null,
 			'images_live' => is_array( $map['urls'] ) ? count( $map['urls'] ) : 0,
 			'analysis'    => get_option( 'easyopt_cloud_analysis' ) ?: null,
+			'trial_pending' => self::trial_pending(),
 		) );
 	}
 

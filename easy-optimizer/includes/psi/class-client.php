@@ -52,6 +52,7 @@ final class Client {
     const GOOGLE_API          = 'https://www.googleapis.com/pagespeedonline/v5/runPagespeed';
 
     const JOB_HOOK   = 'easyopt_psi_job';
+    const JOB_MAX_AGE = 600; // 10 min: longer than any run that is still alive
     const OPT_JOB    = 'easyopt_psi_job_state';
     const OPT_KEYCHK = 'easyopt_psi_key_status';   // {hash, valid, checked}
     const OPT_FIRST  = 'easyopt_psi_first_after';  // once-only auto "after" flag
@@ -82,6 +83,11 @@ final class Client {
      */
     public static function on_settings_saved() {
         if ( self::has_baseline() || self::job_running() ) {
+            return;
+        }
+        // Whatever stopped that run would stop this one too, and the card would
+        // spin for another 10 minutes after every save. The Run button still works.
+        if ( ! empty( self::job_state()['died'] ) ) {
             return;
         }
         if ( '' === self::own_key() && ! self::is_registered() ) {
@@ -412,16 +418,25 @@ final class Client {
 
     private static function job_state() {
         $j = get_option( self::OPT_JOB, array() );
-        return is_array( $j ) ? $j : array();
+        if ( ! is_array( $j ) ) {
+            return array();
+        }
+        // A runner that dies (a host time limit, a fatal error) can't report it.
+        // The card only knows what it reads here, so this is where a dead run
+        // has to end, or its spinner stays up and its Run button stays hidden.
+        if ( 'running' === ( $j['status'] ?? '' ) && ( time() - (int) ( $j['started'] ?? 0 ) ) >= self::JOB_MAX_AGE ) {
+            $j['status']  = 'error';
+            $j['died']    = true;
+            $j['message'] = __( 'The speed test stopped before it finished. Your server may have ended the request while it waited for results. Try again, and if this keeps happening, ask your host about request time limits.', 'easy-optimizer' );
+            update_option( self::OPT_JOB, $j, false );
+            delete_transient( 'easyopt_psi_job_lock' );
+            self::on_job_finished( $j );
+        }
+        return $j;
     }
 
     private static function job_running() {
-        $j = self::job_state();
-        if ( empty( $j['status'] ) || 'running' !== $j['status'] ) {
-            return false;
-        }
-        // Stale-job recovery: a crashed runner must never wedge the button.
-        return ( time() - (int) ( $j['started'] ?? 0 ) ) < 10 * MINUTE_IN_SECONDS;
+        return 'running' === ( self::job_state()['status'] ?? '' );
     }
 
     private static function has_baseline() {
@@ -499,9 +514,21 @@ final class Client {
         // short on. First runner wins; the other returns and lets the poll
         // loop pick up the persisted results.
         if ( false !== get_transient( 'easyopt_psi_job_lock' ) ) {
+            // This event was the job's only one. If the runner holding the lock
+            // has died, nothing else would pick the job up, so look again once
+            // the lock has run out. If that runner finishes, this is a no-op.
+            if ( 'cron' === $via && ! wp_next_scheduled( self::JOB_HOOK ) ) {
+                wp_schedule_single_event( time() + 3 * MINUTE_IN_SECONDS, self::JOB_HOOK );
+            }
             return;
         }
         set_transient( 'easyopt_psi_job_lock', $via, 3 * MINUTE_IN_SECONDS );
+
+        // The four PSI tests run in parallel with a 120s HTTP timeout; give
+        // this request room to wait for them.
+        if ( function_exists( 'set_time_limit' ) ) {
+            @set_time_limit( 180 );
+        }
 
         // "before" steps share one bypass token (10-min TTL covers the run).
         $needs_before = false;
@@ -596,11 +623,6 @@ final class Client {
     public static function rest_run_step() {
         if ( ! self::job_running() ) {
             return rest_ensure_response( array( 'ok' => true, 'job' => self::job_state() ) );
-        }
-        // The four PSI tests run in parallel with a 120s HTTP timeout; give
-        // this request room to wait for them.
-        if ( function_exists( 'set_time_limit' ) ) {
-            @set_time_limit( 180 );
         }
         // The scheduled event stays in place; if wp-cron recovers later and
         // fires it, the lock (or the no-pending-steps guard) makes it a no-op.

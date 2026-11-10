@@ -65,6 +65,9 @@ class EasyOpt_Presets {
             'easyopt_unused_css'                 => 0,
             'easyopt_unused_css_post_types_only' => 1,
             'easyopt_delay_js'                   => 0,
+            // (2.8.0) Defer JS is its own engine now. Governed here so Safe
+            // Mode switches it off too; no preset turns it on.
+            'easyopt_defer_js'                   => 0,
             'easyopt_lazyload_fonts'             => 0,
             // (2.5.7) Minification is now GOVERNED by the presets. It was
             // absent from every tier, so the Safe Mode button — the emergency
@@ -106,6 +109,7 @@ class EasyOpt_Presets {
             'easyopt_delay_js'                   => 1,
             'easyopt_delay_js_method'            => 'delay',
             'easyopt_delay_js_exclude_jquery'    => 1,
+            'easyopt_delay_js_external_only'     => 0,
             'easyopt_add_missing_dims'           => 1,
         ) );
 
@@ -488,7 +492,7 @@ class EasyOpt_Presets {
             // Snapshot current settings BEFORE applying Safe (only the first
             // time, so a double-enable doesn't overwrite the real backup).
             if ( ! (int) get_option( 'easyopt_safe_mode_active', 0 ) ) {
-                update_option( 'easyopt_safe_mode_backup', EasyOpt_Config::get_all(), false );
+                update_option( 'easyopt_safe_mode_backup', EasyOpt_Config::without_secrets( EasyOpt_Config::get_all() ), false );
             }
             $changed = self::apply( 'safe' );
             if ( is_wp_error( $changed ) ) {
@@ -510,7 +514,12 @@ class EasyOpt_Presets {
         // Disable → restore the snapshot.
         $backup = get_option( 'easyopt_safe_mode_backup', array() );
         if ( is_array( $backup ) && ! empty( $backup ) ) {
-            EasyOpt_Config::update_many( $backup );
+            // (2.8.0) The snapshot holds credentials as '' (get_all() never
+            // returns their values) and put_secrets() reads '' as DELETE, so
+            // restoring it verbatim wiped the cloud key, the licence key and
+            // every other stored credential. Snapshots taken before 2.8.0
+            // still carry those keys — strip them on the way back in too.
+            EasyOpt_Config::update_many( EasyOpt_Config::without_secrets( $backup ) );
             if ( class_exists( 'EasyOpt_Save_Coordinator' ) ) {
                 EasyOpt_Save_Coordinator::drain_now();
             }

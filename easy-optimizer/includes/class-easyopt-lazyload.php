@@ -134,6 +134,7 @@ class EasyOpt_LazyLoad {
         $exclude_values = (string) EasyOpt_Config::get( 'lazyload_exclude', '' );
         $exclude_first  = absint( EasyOpt_Config::get( 'lazyload_exclude_first', 2 ) );
         $exclude_lines  = self::parse_exclude_lines( $exclude_values );
+        $yt_facade      = (int) EasyOpt_Config::get( 'lazy_youtube', 0 );
 
         // ── Pass 1 — nesting metadata (noscript / adminbar / picture) ──
         $meta = self::collect_metadata( $html );
@@ -173,7 +174,9 @@ class EasyOpt_LazyLoad {
                         // reaches it. data-src blocks the third party
                         // entirely until scroll. In native mode the ~2KB
                         // inline shim (not lazysizes) restores these.
-                        self::iframe_lazyify( $p );
+                        if ( ! $yt_facade || ! self::youtube_facade( $p ) ) {
+                            self::iframe_lazyify( $p );
+                        }
                     }
                     break;
 
@@ -506,6 +509,66 @@ class EasyOpt_LazyLoad {
         $p->remove_attribute( 'src' );
         $p->add_class( 'lazyload' );
         self::$needs_runtime = true;
+    }
+
+    /**
+     * (2.8.0) Show a YouTube embed's thumbnail until it is clicked.
+     *
+     * Done with `srcdoc`, which the browser renders INSTEAD of `src`: the
+     * iframe keeps its src, size, classes and place in the layout, but shows
+     * a thumbnail and a play button rather than loading the ~1 MB player. The
+     * button links to the embed with autoplay=1, so one click plays it. No
+     * JavaScript — nothing waits on the lazy runtime or on Delay JS.
+     *
+     * Left as a normal lazy iframe when a script controls the player
+     * (enablejsapi), for playlists, and for embeds that already autoplay
+     * (background videos).
+     *
+     * @return bool True when the thumbnail was applied.
+     */
+    private static function youtube_facade( $p ) {
+        if ( null !== $p->get_attribute( 'srcdoc' ) ) {
+            return false;
+        }
+        $src = trim( (string) $p->get_attribute( 'src' ) );
+        if ( ! preg_match( '#^https?://(?:www\.)?(youtube(?:-nocookie)?\.com)/embed/([A-Za-z0-9_-]{11})(?:\?([^\#]*))?(?:\#.*)?$#i', $src, $m ) ) {
+            return false;
+        }
+        $query = isset( $m[3] ) ? (string) $m[3] : '';
+        if ( preg_match( '/(?:^|&)(?:enablejsapi=1|autoplay=1|list=)/i', $query ) ) {
+            return false;
+        }
+
+        // Rebuilt from parts we checked, so nothing from the page reaches
+        // the frame's own document unescaped.
+        $params = array();
+        foreach ( explode( '&', $query ) as $pair ) {
+            if ( preg_match( '/^([a-z_]+)=([A-Za-z0-9_.,:-]*)$/i', $pair, $kv ) && 'autoplay' !== strtolower( $kv[1] ) ) {
+                $params[] = $kv[1] . '=' . $kv[2];
+            }
+        }
+        $params[] = 'autoplay=1';
+        $href  = 'https://www.' . strtolower( $m[1] ) . '/embed/' . $m[2] . '?' . implode( '&amp;', $params );
+        $thumb = 'https://i.ytimg.com/vi/' . $m[2] . '/hqdefault.jpg';
+        $title = trim( (string) preg_replace( '/[<>"\'&\s]+/', ' ', (string) $p->get_attribute( 'title' ) ) );
+        $label = '' !== $title ? 'Play: ' . $title : 'Play video';
+
+        $doc = '<style>*{margin:0;padding:0;overflow:hidden}html,body,a,img{display:block;width:100%;height:100%}'
+            . 'img{object-fit:cover}a{position:relative}'
+            . 'span{position:absolute;top:50%;left:50%;width:68px;height:48px;margin:-24px 0 0 -34px;background:#f00;border-radius:14px;opacity:.85}'
+            . 'span:after{content:"";position:absolute;top:14px;left:27px;border-style:solid;border-width:10px 0 10px 17px;border-color:transparent transparent transparent #fff}'
+            . 'a:hover span,a:focus span{opacity:1}</style>'
+            . '<a href="' . $href . '" aria-label="' . $label . '"><img src="' . $thumb . '" alt="" loading="lazy"><span></span></a>';
+
+        $p->set_attribute( 'srcdoc', $doc );
+        $p->set_attribute( 'loading', 'lazy' );
+
+        // The click plays it; the frame needs autoplay delegated to do so.
+        $allow = (string) $p->get_attribute( 'allow' );
+        if ( false === stripos( $allow, 'autoplay' ) ) {
+            $p->set_attribute( 'allow', ( '' === trim( $allow ) ? '' : rtrim( trim( $allow ), ';' ) . '; ' ) . 'autoplay' );
+        }
+        return true;
     }
 
     /**

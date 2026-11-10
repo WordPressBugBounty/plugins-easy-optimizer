@@ -22,7 +22,9 @@ class EasyOpt_Delay_JS {
      */
     public static function process_buffer( $html ) {
 
-        if ( ! (int) EasyOpt_Config::get( 'delay_js', 0 ) ) {
+        // (2.8.0) The engine flag: a not-yet-migrated "method = defer" site
+        // has delay_js on but runs Defer JS instead.
+        if ( ! EasyOpt_Config::js_delay_on() ) {
             return $html;
         }
 
@@ -66,12 +68,15 @@ class EasyOpt_Delay_JS {
         // Build exclusion list.
         $exclusions = self::get_exclusions();
 
+        // (2.8.0) Scripts that stay immediate keep what they need immediate.
+        $kept = self::kept_handles( $html, $exclusions );
+
         // Find all <script> tags.
         // We process the raw HTML to avoid DOM parser issues with inline JS.
         $html = preg_replace_callback(
             '#<script\b([^>]*)>(.*?)</script>#si',
-            function ( $match ) use ( $exclusions ) {
-                return self::rewrite_script_tag( $match[0], $match[1], $match[2], $exclusions );
+            function ( $match ) use ( $exclusions, $kept ) {
+                return self::rewrite_script_tag( $match[0], $match[1], $match[2], $exclusions, $kept );
             },
             $html
         );
@@ -130,8 +135,7 @@ class EasyOpt_Delay_JS {
             return $html;
         }
 
-        // Cache directory: wp-content/uploads/easyopt/js/inline/
-        $upload_dir = wp_get_upload_dir();
+        // Cache directory: wp-content/cache/easyopt/js/inline/
         $cache_dir  = trailingslashit( WP_CONTENT_DIR ) . 'cache/easyopt/js/inline/';
         $cache_url  = trailingslashit( content_url() ) . 'cache/easyopt/js/inline/';
         if ( ! is_dir( $cache_dir ) ) {
@@ -217,9 +221,91 @@ class EasyOpt_Delay_JS {
     }
 
     /**
+     * (2.8.0) Handles that must not be delayed because a script the user (or
+     * a built-in) excluded depends on them.
+     *
+     * Excluding `slider.js` used to leave its jQuery delayed, so the slider
+     * ran first and threw — the user then had to find and exclude every
+     * dependency by hand. Now an excluded script keeps, through WordPress'
+     * own registry: its dependencies (recursively), its own inline parts
+     * (-js-extra / -before / -translations / -after), and jQuery when
+     * excluded inline code calls it.
+     *
+     * @param string   $html
+     * @param string[] $exclusions
+     * @return array<string,bool> handle => true
+     */
+    private static function kept_handles( $html, array $exclusions ) {
+        if ( ! class_exists( 'EasyOpt_JS_Graph' )
+             || ! preg_match_all( '#<script\b([^>]*)>(.*?)</script>#si', $html, $tags, PREG_SET_ORDER ) ) {
+            return array();
+        }
+        $kept   = array();
+        $jquery = false;
+        foreach ( $tags as $t ) {
+            if ( ! self::is_delayable_type( $t[1] )
+                 || ! ( self::is_excluded( $t[0], $exclusions ) || self::is_own_script( $t[0] ) ) ) {
+                continue;
+            }
+            $ref = EasyOpt_JS_Graph::tag_handle( $t[1] );
+            if ( null !== $ref ) {
+                if ( '' === $ref[1] || 'after' === $ref[1] ) {
+                    $kept[ $ref[0] ] = true;
+                } elseif ( 'before' === $ref[1] || 'translations' === $ref[1] ) {
+                    foreach ( EasyOpt_JS_Graph::deps( $ref[0] ) as $d ) {
+                        $kept[ $d ] = true;
+                    }
+                }
+                continue;
+            }
+            if ( ! preg_match( '/\bsrc\s*=/i', $t[1] ) && '' !== trim( $t[2] ) && EasyOpt_JS_Graph::uses_jquery( $t[2] ) ) {
+                $jquery = true;
+            }
+        }
+        if ( $jquery ) {
+            foreach ( EasyOpt_JS_Graph::JQUERY as $h ) {
+                $kept[ $h ] = true;
+            }
+        }
+        return EasyOpt_JS_Graph::with_deps( $kept );
+    }
+
+    /** Classic script (no type, text/javascript, application/javascript)? */
+    private static function is_delayable_type( $atts_string ) {
+        if ( preg_match( '/type\s*=\s*["\']([^"\']+)["\']/i', $atts_string, $type_match ) ) {
+            return in_array( strtolower( trim( $type_match[1] ) ), array( 'text/javascript', 'application/javascript', '' ), true );
+        }
+        return true;
+    }
+
+    /** Does any exclusion pattern match the whole tag (src, id, content)? */
+    private static function is_excluded( $full_tag, array $exclusions ) {
+        foreach ( $exclusions as $excl ) {
+            if ( '' !== $excl && false !== stripos( $full_tag, $excl ) ) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * (2.8.0) "Delay external scripts only": the site's own files, jQuery
+     * wherever it is hosted, and inline code naming them stay immediate.
+     *
+     * Other inline code stays delayed: that is where GTM and pixel snippets
+     * live, and run early they load their scripts straight away. So do the
+     * files Include Inline Scripts makes, which only look like our own.
+     */
+    private static function is_own_script( $full_tag ) {
+        return (int) EasyOpt_Config::get( 'delay_js_external_only', 0 )
+            && false === stripos( $full_tag, '/easyopt/js/inline/' )
+            && self::is_excluded( $full_tag, array( '/wp-content/', '/wp-includes/', 'jquery.min.js', 'jquery.js', 'jquery-migrate' ) );
+    }
+
+    /**
      * Decide whether to rewrite a single script tag.
      */
-    private static function rewrite_script_tag( $full_tag, $atts_string, $content, $exclusions ) {
+    private static function rewrite_script_tag( $full_tag, $atts_string, $content, $exclusions, array $kept = array() ) {
 
         // Never touch our own loader.
         if ( false !== stripos( $atts_string, 'easyopt-delay-js' ) ) {
@@ -248,12 +334,14 @@ class EasyOpt_Delay_JS {
         }
 
         // Check exclusions — match against entire tag (src, id, content).
-        $check_string = $full_tag;
-        foreach ( $exclusions as $excl ) {
-            if ( '' === $excl ) {
-                continue;
-            }
-            if ( false !== stripos( $check_string, $excl ) ) {
+        if ( self::is_excluded( $full_tag, $exclusions ) || self::is_own_script( $full_tag ) ) {
+            return $full_tag;
+        }
+
+        // (2.8.0) Needed, directly or not, by a script that stays immediate.
+        if ( ! empty( $kept ) && class_exists( 'EasyOpt_JS_Graph' ) ) {
+            $ref = EasyOpt_JS_Graph::tag_handle( $atts_string );
+            if ( null !== $ref && isset( $kept[ $ref[0] ] ) ) {
                 return $full_tag;
             }
         }
@@ -325,6 +413,8 @@ class EasyOpt_Delay_JS {
             'easyopt-lazy-shim',
             'easyopt-beacon',
             'easyopt-lcp-beacon',
+            // (2.8.0) URL Inspector error capture — must run before everything.
+            'easyopt-page-test',
             // (2.7.5) Independent Analytics' inline page-view tracker. Delayed,
             // it waited for an interaction on Mac/Linux desktops, so visitors
             // who left without scrolling or moving the mouse were never counted.
@@ -342,6 +432,12 @@ class EasyOpt_Delay_JS {
         if ( ! empty( $user ) ) {
             $lines    = array_filter( array_map( 'trim', explode( "\n", $user ) ) );
             $defaults = array_merge( $defaults, $lines );
+        }
+
+        // (2.8.0) One-click exclusions — only the entries someone ticked.
+        $oneclick = (string) EasyOpt_Config::get( 'delay_js_oneclick', '' );
+        if ( '' !== trim( $oneclick ) && class_exists( 'EasyOpt_Delay_Oneclick' ) ) {
+            $defaults = array_merge( $defaults, EasyOpt_Delay_Oneclick::patterns( $oneclick ) );
         }
 
         return apply_filters( 'easyopt_delay_js_exclusions', $defaults );

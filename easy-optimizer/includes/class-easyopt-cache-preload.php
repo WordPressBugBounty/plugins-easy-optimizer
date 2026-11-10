@@ -508,6 +508,9 @@ class EasyOpt_Cache_Preload {
      *  double-counted. */
     const INFLIGHT_TTL = 45;
 
+    /** (2.8.0) Seconds between admin-side kicks of a stalled queue (maybe_kick). */
+    const KICK_EVERY = 30;
+
     /** Hard ceiling on simultaneous preload renders, per speed level. */
     private static function inflight_ceiling() {
         switch ( self::governor_level() ) {
@@ -571,12 +574,23 @@ class EasyOpt_Cache_Preload {
      * @param array  $extra Additional query args (e.g. eonobuf).
      * @return string
      */
+    /**
+     * (2.8.0) Every warm request goes through EasyOpt_Loopback: straight to
+     * this server when that route is proven, not out through a CDN and back.
+     */
+    private static function http_get( $url, array $args ) {
+        return class_exists( 'EasyOpt_Loopback' ) ? EasyOpt_Loopback::get( $url, $args ) : wp_remote_get( $url, $args );
+    }
+
     private static function warm_url( $url, $slot = '', array $extra = array() ) {
         $args = array( 'eopreload' => '1' );
         if ( '' !== (string) $slot ) {
             $args['eoslot'] = (string) $slot;
         }
         if ( function_exists( 'easyopt_preload_signature' ) ) {
+            if ( function_exists( 'easyopt_ensure_preload_secret' ) ) {
+                easyopt_ensure_preload_secret();
+            }
             $sig = easyopt_preload_signature( (string) $slot );
             if ( '' !== $sig ) {
                 $args['eosig'] = $sig;
@@ -1130,6 +1144,11 @@ class EasyOpt_Cache_Preload {
         // pre-1.5.8 installs into the new start() so users don't end
         // up with a stuck preload after upgrading.
         add_action( 'easyopt_cache_preload_restart', array( __CLASS__, 'start' ) );
+
+        // (2.8.0) Admin page loads restart a stalled queue (see maybe_kick()).
+        if ( is_admin() && ! wp_doing_ajax() ) {
+            add_action( 'admin_init', array( __CLASS__, 'maybe_kick' ) );
+        }
     }
 
     /**
@@ -1368,7 +1387,10 @@ class EasyOpt_Cache_Preload {
             return false;
         }
 
-        // Kick the dispatcher.
+        // Kick the dispatcher, over a proven direct route when there is one.
+        if ( class_exists( 'EasyOpt_Loopback' ) ) {
+            EasyOpt_Loopback::refresh();
+        }
         self::build_queue_instance()->start_queue();
 
         // (2.4.5) When WP-Cron is disabled we can't rely on the per-minute
@@ -1384,6 +1406,49 @@ class EasyOpt_Cache_Preload {
         }
 
         return true;
+    }
+
+    /**
+     * (2.8.0) Restart a preload queue that nobody is working.
+     *
+     * Each runner dispatches the next one, and the per-minute watchdog revives
+     * a chain that broke. But the watchdog is a WP-Cron event, and WP-Cron only
+     * runs when a request loads WordPress: with the page cache serving visitors
+     * straight from .htaccess that can take hours, so one lost dispatch left
+     * the queue waiting that long. Admin activity loads WordPress, so it kicks
+     * the queue too: at most once per KICK_EVERY seconds, dispatch only (the
+     * same cheap counts start_queue() always does), never work inline.
+     *
+     * The same kick settles the results ledger, which the watchdog only did
+     * while a run was active or for 30 minutes after it: a row whose warm was
+     * lost after that stayed 'pending' for good, and a drained run whose
+     * watchdog never fired stayed 'running'.
+     */
+    public static function maybe_kick() {
+        if ( ! (int) EasyOpt_Config::get( 'cache_preload', 0 ) ) {
+            return;
+        }
+        if ( false !== get_transient( 'easyopt_preload_kick_gate' ) ) {
+            return;
+        }
+        set_transient( 'easyopt_preload_kick_gate', 1, self::KICK_EVERY );
+
+        if ( class_exists( 'EasyOpt_Preload_Results' ) ) {
+            EasyOpt_Preload_Results::reconcile( EasyOpt_Preload_Results::RECONCILE_CAP, false );
+        }
+        $status = (string) get_option( 'easyopt_cache_preload_status', 'idle' );
+        if ( 'running' === $status || 'paused' === $status ) {
+            self::maybe_mark_done();
+        }
+
+        if ( '0' === (string) get_option( 'easyopt_queue_active', 'unset' ) ) {
+            return; // queue drained — nothing to restart.
+        }
+        if ( class_exists( 'EasyOpt_Loopback' ) ) {
+            EasyOpt_Loopback::refresh();
+        }
+        self::build_queue_instance()->start_queue();
+        self::warm_queue()->start_queue();
     }
 
     public static function stop() {
@@ -1453,7 +1518,12 @@ class EasyOpt_Cache_Preload {
         }
         set_transient( $lock, 1, 10 * MINUTE_IN_SECONDS );
 
-        if ( class_exists( 'EasyOpt_Preload_Results' ) ) {
+        // (2.8.0) A 404 render still gets its warm (the 404 template has its
+        // own Used CSS), but its URL is whatever was asked for, usually a
+        // scanner's guess, not a page of this site: keep it out of the
+        // preload results.
+        if ( class_exists( 'EasyOpt_Preload_Results' ) && self::may_warm_url( $url )
+            && ! ( function_exists( 'is_404' ) && is_404() ) ) {
             EasyOpt_Preload_Results::adopt( $url );
         }
 
@@ -1488,7 +1558,7 @@ class EasyOpt_Cache_Preload {
             return;
         }
         // (2.5.5) Pages only — see is_warmable_url().
-        if ( ! self::is_warmable_url( $url ) ) {
+        if ( ! self::may_warm_url( $url ) ) {
             return;
         }
         if ( ! (int) EasyOpt_Config::get( 'cache_preload', 0 ) ) {
@@ -1862,7 +1932,7 @@ class EasyOpt_Cache_Preload {
         $headers['Range'] = 'bytes=0-0';
         $warm_url         = self::warm_url( $url, $slot );
 
-        $response = wp_remote_get(
+        $response = self::http_get(
             $warm_url,
             array(
                 'timeout'     => 0.01,
@@ -1878,6 +1948,35 @@ class EasyOpt_Cache_Preload {
         if ( is_wp_error( $response ) ) {
             self::inflight_release( $slot );
         }
+    }
+
+    /**
+     * (2.8.0) A warm left no file and nothing recorded why, because the
+     * fire-and-forget path never sees the server's answer. Repeat it once as a
+     * blocking request, which gets that answer and fixes the page if it works.
+     *
+     * @param string $url
+     * @param string $device 'desktop' | 'mobile'
+     * @return string What happened, for the log.
+     */
+    public static function recheck_missing_file( $url, $device ) {
+        $t0 = microtime( true );
+        try {
+            self::warm_one( $url, $device );
+        } catch ( \Exception $e ) {
+            return $e->getMessage();
+        }
+        if ( self::cache_already_written( $url, 'mobile' === $device ) ) {
+            return sprintf(
+                'a blocking warm wrote the file in %.1fs, so background warm requests are failing on this server',
+                microtime( true ) - $t0
+            );
+        }
+        $row = class_exists( 'EasyOpt_Preload_Results' ) ? EasyOpt_Preload_Results::row_for_url( $url ) : null;
+        if ( is_array( $row ) && 'failed' !== $row['status'] ) {
+            return $row['status'] . ': ' . $row['note']; // warm_one() or the render recorded it
+        }
+        return 'the page answered, but no file was written and it gave no reason';
     }
 
     /**
@@ -1947,7 +2046,7 @@ class EasyOpt_Cache_Preload {
         );
 
         $gov_t0   = microtime( true );
-        $response = wp_remote_get( $warm_url, $args );
+        $response = self::http_get( $warm_url, $args );
 
         if ( is_wp_error( $response ) ) {
             // Network failure / timeout → congestion signal + retryable.
@@ -2225,7 +2324,7 @@ class EasyOpt_Cache_Preload {
 
         for ( $hop = 0; $hop < 3; $hop++ ) {
             $probe_url = self::warm_url( $current );
-            $resp      = wp_remote_get(
+            $resp      = self::http_get(
                 $probe_url,
                 array(
                     'timeout'     => $probe_t,
@@ -2435,7 +2534,7 @@ class EasyOpt_Cache_Preload {
         }
 
         $warm_url = self::warm_url( $target_url );
-        $resp     = wp_remote_get(
+        $resp     = self::http_get(
             $warm_url,
             array(
                 'timeout'     => $timeout,
@@ -2527,7 +2626,7 @@ class EasyOpt_Cache_Preload {
      */
     private static function refetch_without_buffer( $url, $device, $timeout ) {
         $warm_url = self::warm_url( $url, '', array( 'eonobuf' => '1' ) );
-        $resp = wp_remote_get(
+        $resp = self::http_get(
             $warm_url,
             array(
                 'timeout'     => $timeout,
@@ -2697,6 +2796,9 @@ class EasyOpt_Cache_Preload {
                 CURLOPT_ENCODING       => 'gzip',
                 CURLOPT_HTTPHEADER     => self::curl_header_lines( self::build_warm_headers( $device ) ),
             ) );
+            if ( class_exists( 'EasyOpt_Loopback' ) ) {
+                EasyOpt_Loopback::pin_handle( $ch, $warm_url );
+            }
             curl_multi_add_handle( $mh, $ch );
             $handles[ $id ] = array( 'h' => $ch, 'url' => $url, 'is_mobile' => $is_mobile );
         }
@@ -3741,6 +3843,13 @@ class EasyOpt_Cache_Preload {
             return false;
         }
 
+        // (2.8.0) Theme, plugin, upload and core files are never pages.
+        // Asking for one that does not exist renders the 404 page, and
+        // scanners ask for thousands (old default themes, plugin readmes).
+        if ( false !== strpos( $path, '/wp-content/' ) || false !== strpos( $path, '/wp-includes/' ) ) {
+            return false;
+        }
+
         /**
          * Filter whether a URL may enter the warm queue.
          *
@@ -3749,6 +3858,27 @@ class EasyOpt_Cache_Preload {
          * @param string $url      The URL.
          */
         return (bool) apply_filters( 'easyopt_preload_warmable_url', true, $url );
+    }
+
+    /**
+     * (2.8.0) May the preloader warm this URL ahead of a visitor?
+     *
+     * A visit-only page is cached when someone opens it, for the device they
+     * used, and is never warmed: not from the walk, not for the other device,
+     * not on a retry. For URLs too many or too
+     * rarely read to be worth rendering ahead, such as forum replies.
+     *
+     * Separate from is_warmable_url() because a Used CSS build still needs its
+     * warm render on such a page. Without one, the visitor's render has to do
+     * that work (see EasyOpt_Unused_CSS).
+     *
+     * @since 2.8.0
+     * @param string $url Absolute URL.
+     * @return bool
+     */
+    public static function may_warm_url( $url ) {
+        return self::is_warmable_url( $url )
+            && ! apply_filters( 'easyopt_preload_visit_only_url', false, $url );
     }
 
     public static function collect_urls() {
@@ -3777,7 +3907,7 @@ class EasyOpt_Cache_Preload {
                 return;
             }
             // (2.5.5) Pages only — see is_warmable_url().
-            if ( ! self::is_warmable_url( $url ) ) {
+            if ( ! self::may_warm_url( $url ) ) {
                 return;
             }
             // Keep the most-important (lowest) priority seen for this URL.

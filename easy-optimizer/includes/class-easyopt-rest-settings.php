@@ -77,6 +77,7 @@ class EasyOpt_Rest_Settings {
     public static function get_settings( $request ) {
         return rest_ensure_response( array(
             'settings' => EasyOpt_Config::get_all(),
+            'secrets'  => EasyOpt_Config::secret_hints(),
         ) );
     }
 
@@ -100,12 +101,12 @@ class EasyOpt_Rest_Settings {
 
         $changed_keys = EasyOpt_Config::update_many( $changes );
 
-        // Run deferred side-effects (cache clear, preload restart, htaccess)
-        // synchronously so the response includes post-clear state.
-        // The shutdown drain() becomes a no-op because flags are reset.
-        if ( class_exists( 'EasyOpt_Save_Coordinator' ) ) {
-            EasyOpt_Save_Coordinator::drain_now();
-        }
+        // (2.8.0) Side-effects (cache clear, preload restart, htaccess) are no
+        // longer run here: the coordinator's shutdown drain runs them after
+        // this response is sent, so a save that empties a large cache no
+        // longer waits for it.
+        $clearing = class_exists( 'EasyOpt_Save_Coordinator' )
+            && EasyOpt_Save_Coordinator::pending( 'clear_cache' );
 
         // (2.4.0) Capture the PageSpeed baseline once, in the background,
         // if it doesn't exist yet. No-op on every later save.
@@ -115,8 +116,9 @@ class EasyOpt_Rest_Settings {
 
         // Include fresh dashboard stats so React can update the UI
         // immediately without waiting for a separate poll.
+        // Not while a clear is still to run: those numbers are about to change.
         $stats = null;
-        if ( class_exists( 'EasyOpt_Rest_Dashboard' ) && method_exists( 'EasyOpt_Rest_Dashboard', 'get_dashboard_stats' ) ) {
+        if ( ! $clearing && class_exists( 'EasyOpt_Rest_Dashboard' ) && method_exists( 'EasyOpt_Rest_Dashboard', 'get_dashboard_stats' ) ) {
             // Fast path: never block a settings save on a cache-directory scan.
             // The counter is O(1); on a not-yet-seeded counter we report 0 and
             // let the dashboard's own GET /dashboard-stats fill it in.
@@ -126,6 +128,7 @@ class EasyOpt_Rest_Settings {
 
         return rest_ensure_response( array(
             'settings' => EasyOpt_Config::get_all(),
+            'secrets'  => EasyOpt_Config::secret_hints(),
             'changed'  => $changed_keys,
             'saved_at' => time(),
             'stats'    => $stats,

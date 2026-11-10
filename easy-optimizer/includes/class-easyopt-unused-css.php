@@ -23,7 +23,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class EasyOpt_Unused_CSS {
 
-    /** @var string  Cache directory inside wp-content/uploads/easyopt/css/ */
+    /** @var string  Cache directory: wp-content/cache/easyopt/css/ */
     private static $cache_dir  = '';
     private static $cache_url  = '';
 
@@ -214,6 +214,18 @@ class EasyOpt_Unused_CSS {
         // Strip comments locally for stylesheet discovery.
         $html_clean = preg_replace( '/<!--.*?-->/s', '', $html );
 
+        // Permissive matcher: capture every `<link>` that has any attributes.
+        // We validate `rel="stylesheet"` and other attributes in the loop.
+        // This catches Google Fonts (`/css2?...`), Adobe Fonts and any other
+        // stylesheet whose URL doesn't end in a literal `.css` segment.
+        if ( ! preg_match_all( '#<link\b([^>]*?)\/?>#i', $html_clean, $links, PREG_SET_ORDER ) ) {
+            return $html;
+        }
+
+        $excluded_stylesheets   = self::get_excluded_stylesheets();
+        $passthrough_stylesheets = self::get_passthrough_stylesheets();
+        $behaviour              = EasyOpt_Config::get( 'unused_css_behavior', 'delayed' );
+
         // ── (2.5.2) Selector-union sidecar — shared-type mode only ──
         // In "Process Post Types Only" mode one Used CSS file is shared by
         // every URL of a type, but it was write-once: whichever page rendered
@@ -237,6 +249,45 @@ class EasyOpt_Unused_CSS {
                         sprintf( 'New selectors detected for shared type "%s" — rebuilding Used CSS with unioned history.', self::$page_context )
                     );
                 }
+            }
+        }
+
+        // ── (2.8.0) Stylesheet fingerprint ──
+        // A Used CSS file was only ever rebuilt on a settings save, theme
+        // switch, Customizer save or post save. A plugin or theme UPDATE (or
+        // a builder regenerating its CSS file) changed the stylesheets under
+        // it, and pages kept the old rules — new markup unstyled until the
+        // first interaction restored the originals. Each build now records a
+        // signature per stylesheet; when one on this page has changed, the
+        // page is served with its original stylesheets and the rebuild goes
+        // to the preload worker. The old file stays in place until the new
+        // one is complete (write_file() is atomic).
+        $sheets_current = self::page_sheet_sigs( $links, $excluded_stylesheets );
+        if ( $used_css_exists && null === self::$sidecar_scan ) {
+            $known = self::load_sheet_sigs();
+            if ( null === $known ) {
+                // Built before 2.8.0: adopt what the page links now.
+                self::save_sheet_sigs( $sheets_current, true );
+            } elseif ( self::sheets_changed( $sheets_current, $known ) ) {
+                if ( class_exists( 'EasyOpt_Debug_Log' ) ) {
+                    EasyOpt_Debug_Log::info( 'rucss', sprintf( 'Stylesheets changed for "%s" since its Used CSS was built — rebuilding.', self::$page_context ) );
+                }
+                if ( self::build_recently_failed() ) {
+                    return $html;
+                }
+                $stale_url = class_exists( 'EasyOpt_Cache' ) && method_exists( 'EasyOpt_Cache', 'current_request_url' )
+                    ? EasyOpt_Cache::current_request_url()
+                    : '';
+                if ( '' !== $stale_url && self::rebuild_in_worker() && EasyOpt_Cache_Preload::is_warmable_url( $stale_url ) ) {
+                    EasyOpt_Cache_Preload::enqueue_used_css_build(
+                        $stale_url,
+                        self::$page_context,
+                        class_exists( 'EasyOpt_Cache' ) && EasyOpt_Cache::is_mobile()
+                    );
+                    return $html;
+                }
+                // This render is the worker (or there is none): rebuild here.
+                $used_css_exists = false;
             }
         }
 
@@ -276,18 +327,6 @@ class EasyOpt_Unused_CSS {
 
             return $html;
         }
-
-        // Permissive matcher: capture every `<link>` that has any attributes.
-        // We validate `rel="stylesheet"` and other attributes in the loop.
-        // This catches Google Fonts (`/css2?...`), Adobe Fonts and any other
-        // stylesheet whose URL doesn't end in a literal `.css` segment.
-        if ( ! preg_match_all( '#<link\b([^>]*?)\/?>#i', $html_clean, $links, PREG_SET_ORDER ) ) {
-            return $html;
-        }
-
-        $excluded_stylesheets   = self::get_excluded_stylesheets();
-        $passthrough_stylesheets = self::get_passthrough_stylesheets();
-        $behaviour              = EasyOpt_Config::get( 'unused_css_behavior', 'delayed' );
 
         // Only do the expensive DOM walk + selector extraction when we
         // actually need to BUILD the Used CSS cache. On cache hits this
@@ -504,6 +543,11 @@ class EasyOpt_Unused_CSS {
                 // across builds → a growing superset), so the async beacon
                 // endpoint can tell real classes from junk when it caps.
                 self::save_class_universe();
+
+                // (2.8.0) Record the stylesheets this file was built from. A
+                // per-page context keeps only the current set; a shared type
+                // accumulates, since its pages can legitimately differ.
+                self::save_sheet_sigs( $sheets_current, ! self::sidecar_applicable() );
             } else {
                 // Couldn't persist the file — fail safe, don't strip.
                 self::mark_build_failed();
@@ -596,7 +640,10 @@ class EasyOpt_Unused_CSS {
      * @return string
      */
     private static function delayed_styles_loader() {
-        if ( (int) EasyOpt_Config::get( 'delay_js', 0 )
+        // (2.8.0) The Delay ENGINE, not the delay_js key: with the pre-2.8.0
+        // "method = defer" the key was on but the Delay runtime never loaded,
+        // so this easyoptscript swap never ran and the originals never came.
+        if ( EasyOpt_Config::js_delay_on()
             && (int) EasyOpt_Config::get( 'easyopt_cloud_unused_css', 0 ) ) {
             return '<script type="easyoptscript" id="easyopt-delayed-styles-js">'
                 . 'document.querySelectorAll("link[data-easyopt-delayed]").forEach(function(e){'
@@ -667,7 +714,8 @@ class EasyOpt_Unused_CSS {
             $css = EasyOpt_CDN::rewrite_css_urls( $css );
         }
         // (2.7.2) Fonts / static url()s → the edge. Images were handled above.
-        if ( class_exists( 'EasyOpt_CDN_Assets' ) && EasyOpt_CDN_Assets::enabled() ) {
+        // (2.8.0) Or → the site's own CDN, which takes images too.
+        if ( class_exists( 'EasyOpt_CDN_Assets' ) && '' !== EasyOpt_CDN_Assets::mode() ) {
             $css = EasyOpt_CDN_Assets::rewrite_css_urls( $css );
         }
 
@@ -754,6 +802,11 @@ class EasyOpt_Unused_CSS {
                 EasyOpt_CDN_Cloud::endpoint() . '|' . EasyOpt_CDN_Cloud::account()
                 . '|' . EasyOpt_CDN_Assets::REV
                 . '|' . (string) EasyOpt_Config::get( 'easyopt_cloud_assets_exclude', '' )
+            );
+        } elseif ( class_exists( 'EasyOpt_CDN_Assets' ) && 'custom' === EasyOpt_CDN_Assets::mode() ) {
+            $parts[] = 'assets:custom:' . md5(
+                (string) EasyOpt_Config::get( 'easyopt_cdn_custom_url', '' )
+                . '|' . (string) EasyOpt_Config::get( 'easyopt_cdn_custom_exclude', '' )
             );
         } else {
             $parts[] = 'assets:off';
@@ -2074,14 +2127,147 @@ class EasyOpt_Unused_CSS {
     }
 
     /**
-     * Write a file with an exclusive lock. Returns true on success.
+     * Write a file atomically. Returns true on success.
+     *
+     * (2.8.0) Written to a temp file beside it and renamed over the old one,
+     * so a concurrent render never reads a half-written file and the old
+     * file keeps serving until the new one is complete.
      */
     private static function write_file( $path, $contents ) {
         if ( ! is_string( $path ) || '' === $path ) {
             return false;
         }
-        $result = @file_put_contents( $path, $contents, LOCK_EX );
-        return ( false !== $result );
+        $tmp = $path . '.' . str_replace( '.', '', uniqid( '', true ) ) . '.tmp';
+        if ( false === @file_put_contents( $tmp, $contents ) ) {
+            @unlink( $tmp );
+            return false;
+        }
+        if ( ! @rename( $tmp, $path ) ) {
+            @unlink( $tmp );
+            return false;
+        }
+        return true;
+    }
+
+    /* ───────────────────────────────────────────────
+     *  (2.8.0) Stylesheet fingerprint
+     * ─────────────────────────────────────────────── */
+
+    /** Most signatures a shared type keeps per stylesheet before it stops checking that one. */
+    const SHEET_SIG_VARIANTS = 20;
+
+    private static function sheets_sidecar_path() {
+        return self::$cache_dir . self::$page_context . '.sheets.json';
+    }
+
+    /**
+     * key => signature for each stylesheet on the page that Used CSS acts on
+     * (the same filters as the build loop). Key: the handle id, else the
+     * href path. Signature: a local file's path + size + mtime — or just the
+     * path for our own hash-named copies (minified, externalised inline),
+     * whose names already change with their content and whose mtime is
+     * refreshed daily for GC — or, for a remote sheet, its full URL.
+     *
+     * @param array $links           preg_match_all( PREG_SET_ORDER ) of <link> tags.
+     * @param array $excluded        Excluded-stylesheet patterns.
+     * @return array<string,string>
+     */
+    private static function page_sheet_sigs( array $links, array $excluded ) {
+        $out = array();
+        foreach ( $links as $link ) {
+            $atts = self::parse_atts( isset( $link[1] ) ? $link[1] : '' );
+            if ( empty( $atts['href'] ) || empty( $atts['rel'] ) || 'stylesheet' !== strtolower( $atts['rel'] ) ) {
+                continue;
+            }
+            if ( ! empty( $atts['media'] ) && 'print' === strtolower( $atts['media'] ) ) {
+                continue;
+            }
+            if ( self::match_in_array( $link[0], $excluded ) ) {
+                continue;
+            }
+            $href = self::decode_attr( $atts['href'] );
+            $path = (string) wp_parse_url( $href, PHP_URL_PATH );
+            $key  = ! empty( $atts['id'] ) ? 'id:' . $atts['id'] : 'href:' . $path;
+            $file = self::get_local_path( $href );
+            $stat = ( $file && is_file( $file ) ) ? @stat( $file ) : false;
+            if ( false === $stat ) {
+                $sig = $href;
+            } elseif ( false !== strpos( $path, '/cache/easyopt/' ) ) {
+                $sig = $path;
+            } else {
+                $sig = $path . '|' . (int) $stat['size'] . '|' . (int) $stat['mtime'];
+            }
+            $out[ $key ] = substr( md5( $sig ), 0, 16 );
+        }
+        return $out;
+    }
+
+    /** @return array<string,string[]>|null Null when no fingerprint was recorded. */
+    private static function load_sheet_sigs() {
+        $raw = self::read_file( self::sheets_sidecar_path() );
+        if ( '' === $raw ) {
+            return null;
+        }
+        $data = json_decode( $raw, true );
+        return is_array( $data ) ? $data : null;
+    }
+
+    /**
+     * Record signatures. $fresh replaces the record; otherwise each
+     * stylesheet's list grows (a shared type's pages may differ). A sheet
+     * that has shown more than SHEET_SIG_VARIANTS signatures varies per page
+     * and is no longer checked ('*'), so it can never cause rebuild loops.
+     */
+    private static function save_sheet_sigs( array $sigs, $fresh ) {
+        $data = $fresh ? array() : (array) self::load_sheet_sigs();
+        foreach ( $sigs as $key => $sig ) {
+            $list = isset( $data[ $key ] ) ? (array) $data[ $key ] : array();
+            if ( in_array( '*', $list, true ) || in_array( $sig, $list, true ) ) {
+                continue;
+            }
+            $list[]       = $sig;
+            $data[ $key ] = count( $list ) > self::SHEET_SIG_VARIANTS ? array( '*' ) : $list;
+        }
+        self::write_file( self::sheets_sidecar_path(), wp_json_encode( $data ) );
+    }
+
+    /**
+     * True when a stylesheet the Used CSS was built from now has a signature
+     * it was never built with. Sheets it was not built from are not this
+     * check's business (a shared type's other pages link other sheets).
+     */
+    private static function sheets_changed( array $current, array $known ) {
+        foreach ( $current as $key => $sig ) {
+            if ( ! isset( $known[ $key ] ) || ! is_array( $known[ $key ] ) || in_array( '*', $known[ $key ], true ) ) {
+                continue;
+            }
+            if ( ! in_array( $sig, $known[ $key ], true ) ) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Can a stale Used CSS file be rebuilt by the preload worker instead of
+     * this render? Not when this render IS the worker, preload is off, or the
+     * host's live buffer is unreliable (the preloader then caches the page
+     * from this very render).
+     */
+    private static function rebuild_in_worker() {
+        if ( ! class_exists( 'EasyOpt_Cache_Preload' ) || ! (int) EasyOpt_Config::get( 'cache_preload', 0 ) ) {
+            return false;
+        }
+        if ( defined( 'EASYOPT_IS_PRELOAD_REQUEST' ) && EASYOPT_IS_PRELOAD_REQUEST ) {
+            return false;
+        }
+        if ( method_exists( 'EasyOpt_Cache_Preload', 'is_runner_render' ) && EasyOpt_Cache_Preload::is_runner_render() ) {
+            return false;
+        }
+        if ( method_exists( 'EasyOpt_Cache_Preload', 'live_buffer_skipped' ) && EasyOpt_Cache_Preload::live_buffer_skipped() ) {
+            return false;
+        }
+        return true;
     }
 
     /**
@@ -2338,8 +2524,9 @@ class EasyOpt_Unused_CSS {
                 }
             }
 
-            // (2.5.2) Selector-union sidecars accumulated per shared type.
-            $selector_sidecars = glob( $dir . '*.selectors.json' );
+            // (2.5.2) Selector-union sidecars accumulated per shared type,
+            // and (2.8.0) the stylesheet fingerprints.
+            $selector_sidecars = array_merge( (array) glob( $dir . '*.selectors.json' ), (array) glob( $dir . '*.sheets.json' ) );
             if ( $selector_sidecars ) {
                 foreach ( $selector_sidecars as $file ) {
                     if ( is_file( $file ) ) {
@@ -2515,6 +2702,9 @@ class EasyOpt_Unused_CSS {
             // deleted markup only over-keep, but a clean slate is tighter).
             $type . '.selectors.json',
             $type . '-mobile.selectors.json',
+            // (2.8.0) Stylesheet fingerprints.
+            $type . '.sheets.json',
+            $type . '-mobile.sheets.json',
             // (2.5.4 / perf #2) Transformed-CSS sidecars. Signature-guarded
             // (a stale one is ignored), removed here for tidiness.
             $type . '.used.final.css',

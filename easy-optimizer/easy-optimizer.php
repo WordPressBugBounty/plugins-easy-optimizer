@@ -1,9 +1,9 @@
 <?php
 /**
- * Plugin Name: Easy Optimizer – PageSpeed, Cache & Core Web Vitals
+ * Plugin Name: Easy Optimizer – Speed, Cache & Core Web Vitals for PageSpeed
  * Plugin URI:  https://fluxpress.io
  * Description: Page cache, lazy load, used CSS, delay JS, font optimization, image CDN, LCP preload and more — everything you need to ace Core Web Vitals, in one plugin.
- * Version:     2.7.5
+ * Version:     2.8.0
  * Author:      FluxPress
  * Author URI:  https://fluxpress.io
  * Text Domain: easy-optimizer
@@ -24,7 +24,7 @@ if ( ! defined( 'EASYOPT_PLUGIN_FILE' ) ) {
     define( 'EASYOPT_PLUGIN_FILE', __FILE__ );
 }
 if ( ! defined( 'EASYOPT_VERSION' ) ) {
-    define( 'EASYOPT_VERSION', '2.7.5' );
+    define( 'EASYOPT_VERSION', '2.8.0' );
 }
 if ( ! defined( 'EASYOPT_CSS_LOGIC_VERSION' ) ) {
     // (2.5.0 / A2) Last plugin version in which the Used-CSS strip/keep/
@@ -89,9 +89,32 @@ function easyopt_preload_secret() {
         return $secret;
     }
     // No salt constants (unusual). Fall back to a generated option; read
-    // only on requests that actually carry the preload marker.
-    $secret = (string) get_option( 'easyopt_preload_secret', '' );
-    return $secret;
+    // only on requests that actually carry the preload marker. An empty
+    // result is not memoised, so a secret created later in the same request
+    // (easyopt_ensure_preload_secret()) is picked up.
+    $found = (string) get_option( 'easyopt_preload_secret', '' );
+    if ( '' !== $found ) {
+        $secret = $found;
+    }
+    return $found;
+}
+
+/**
+ * (2.8.0) Make sure a preload secret exists before the preloader signs a URL.
+ *
+ * The activation hook seeds the option, but an install that upgraded in
+ * place from before 2.6.0 never ran it, and on a host without salt constants
+ * it had no secret at all — so the receiving side used to TRUST every
+ * unsigned ?eopreload=1. That fallback is gone; the preloader calls this
+ * instead, so its own warms stay signed and nobody else's are trusted.
+ *
+ * @since 2.8.0
+ */
+function easyopt_ensure_preload_secret() {
+    if ( '' !== easyopt_preload_secret() || ! function_exists( 'add_option' ) ) {
+        return;
+    }
+    add_option( 'easyopt_preload_secret', wp_generate_password( 64, false, false ), '', false );
 }
 
 /**
@@ -128,18 +151,19 @@ if ( isset( $_GET['eopreload'] ) ) { // phpcs:ignore WordPress.Security.NonceVer
         : '';
     $easyopt_want = easyopt_preload_signature( $easyopt_slot );
 
+    // (2.8.0) Signed or nothing. With no secret resolvable the marker used to
+    // be trusted outright; the preloader now creates the secret before it
+    // signs (easyopt_ensure_preload_secret()), so an unsigned marker is never
+    // one of ours.
     if ( '' !== $easyopt_want && '' !== $easyopt_sig && hash_equals( $easyopt_want, $easyopt_sig ) ) {
         define( 'EASYOPT_IS_PRELOAD_REQUEST', true );
         if ( '' !== $easyopt_slot ) {
             define( 'EASYOPT_PRELOAD_SLOT', $easyopt_slot );
         }
-    } elseif ( '' === $easyopt_want ) {
-        // No secret resolvable at all (no salt constants AND no generated
-        // option yet — e.g. mid-activation). Preserve pre-2.6.0 behaviour
-        // rather than silently breaking preload on such installs.
-        define( 'EASYOPT_IS_PRELOAD_REQUEST', true );
-        if ( '' !== $easyopt_slot ) {
-            define( 'EASYOPT_PRELOAD_SLOT', $easyopt_slot );
+        // (2.8.0) The preloader hangs up without waiting for this page, so
+        // finish the render, the cache write and the slot release anyway.
+        if ( function_exists( 'ignore_user_abort' ) ) {
+            @ignore_user_abort( true ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
         }
     }
 
@@ -312,6 +336,11 @@ add_action( 'init', function () {
     // The admin bar injects its own CSS/JS and shifts the layout, so leaving
     // it in place would misrepresent what a visitor gets.
     add_filter( 'show_admin_bar', '__return_false' );
+    // (2.8.0) URL Inspector "Test this page": the frame also carries
+    // ?eoptest=<nonce>, which prints the error-capture script first in <head>.
+    if ( isset( $_GET['eoptest'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- verified in the callback
+        add_action( 'wp_head', array( 'EasyOpt_Url_Inspector', 'maybe_print_test_script' ), -1000 );
+    }
 }, 1 );
 
 // Composer autoload (matthiasmullie/minify) is loaded on-demand by its
@@ -347,6 +376,20 @@ EasyOpt_Save_Coordinator::init();
 EasyOpt_Rest_Settings::init();
 EasyOpt_Rest_Dashboard::init();
 EasyOpt_Presets::init();
+
+// (2.8.0) Read-only diagnostics as WordPress Abilities (6.9+), which the MCP
+// Adapter plugin offers to AI assistants. Registered only when the abilities
+// registry is first used; the class loads only then.
+if ( function_exists( 'wp_register_ability' ) ) {
+    add_action( 'wp_abilities_api_categories_init', array( 'EasyOpt_Abilities', 'register_category' ) );
+    add_action( 'wp_abilities_api_init', array( 'EasyOpt_Abilities', 'register' ) );
+}
+
+// (2.8.0) WP-CLI: wp easyopt cache | preload | inspect | settings.
+if ( defined( 'WP_CLI' ) && WP_CLI ) {
+    require_once EASYOPT_DIR . 'includes/class-easyopt-cli.php';
+    EasyOpt_CLI::register();
+}
 
 // Lightweight opt-in usage tracking.
 EasyOpt_Tracker::register();
@@ -394,6 +437,7 @@ $easyopt_includes = array(
     'class-easyopt-cache.php',
     // its only consumer for now; future image-opt + db-opt jobs will
     // share it).
+    'class-easyopt-loopback.php',
     'class-easyopt-queue.php',
     'class-easyopt-preload-results.php',
     'class-easyopt-cache-preload.php',
@@ -427,14 +471,18 @@ if ( ! empty( $easyopt_opts['easyopt_unused_css'] ) ) {
 if ( ! empty( $easyopt_opts['easyopt_minify_css'] ) || ! empty( $easyopt_opts['easyopt_minify_js'] ) ) {
     $easyopt_conditional[] = 'class-easyopt-minify.php';
 }
-if ( ! empty( $easyopt_opts['easyopt_delay_js'] ) ) {
-    $js_method = isset( $easyopt_opts['easyopt_delay_js_method'] ) ? $easyopt_opts['easyopt_delay_js_method'] : 'delay';
-    if ( 'defer' === $js_method ) {
-        $easyopt_conditional[] = 'class-easyopt-defer-js.php';
-    } else {
-        $easyopt_conditional[] = 'class-easyopt-delay-js.php';
-    }
+// (2.8.0) Delay and Defer are separate engines and may both run. A site whose
+// stored settings still say "Delay JS, method = defer" (not yet migrated by
+// easyopt_finalize_install()) gets Defer alone, as before.
+$easyopt_js_legacy_defer = ! empty( $easyopt_opts['easyopt_delay_js'] )
+    && isset( $easyopt_opts['easyopt_delay_js_method'] ) && 'defer' === $easyopt_opts['easyopt_delay_js_method'];
+if ( ! empty( $easyopt_opts['easyopt_delay_js'] ) && ! $easyopt_js_legacy_defer ) {
+    $easyopt_conditional[] = 'class-easyopt-delay-js.php';
 }
+if ( ! empty( $easyopt_opts['easyopt_defer_js'] ) || $easyopt_js_legacy_defer ) {
+    $easyopt_conditional[] = 'class-easyopt-defer-js.php';
+}
+unset( $easyopt_js_legacy_defer );
 if ( ! empty( $easyopt_opts['easyopt_lazy_images'] ) || ! empty( $easyopt_opts['easyopt_lazy_iframes'] )
      || ! empty( $easyopt_opts['easyopt_lazy_videos'] ) || ! empty( $easyopt_opts['easyopt_add_missing_dims'] ) ) {
     $easyopt_conditional[] = 'class-easyopt-lazyload.php';
@@ -451,10 +499,14 @@ if ( ! empty( $easyopt_opts['easyopt_lcp_preload'] ) ) {
 if ( ! empty( $easyopt_opts['easyopt_images'] ) ) {
     $easyopt_conditional[] = 'class-easyopt-images-delivery.php';
 }
-// FluxPress static assets. Same reason as above: run_processor() uses
-// class_exists( .., false ) and will not autoload the class.
-if ( ! empty( $easyopt_opts['easyopt_cloud_assets'] ) ) {
+// FluxPress static assets and the site's own CDN. Same reason as above:
+// run_processor() uses class_exists( .., false ) and will not autoload the class.
+if ( ! empty( $easyopt_opts['easyopt_cloud_assets'] ) || ! empty( $easyopt_opts['easyopt_cdn_custom'] ) ) {
     $easyopt_conditional[] = 'class-easyopt-cdn-assets.php';
+}
+// (2.8.0) CSS background lazy load, for the same reason.
+if ( ! empty( $easyopt_opts['easyopt_lazy_css_bg'] ) ) {
+    $easyopt_conditional[] = 'class-easyopt-lazy-bg.php';
 }
 // Prefetch Pages (2.6.7) — the speculative navigation engine. Loaded only when
 // the toggle is on; when it is off nothing is registered and WordPress Core's
@@ -1032,12 +1084,16 @@ final class Easy_Optimizer {
         }
         $checks = array(
             'img_opt', 'elementor_bg_cdn',  // CDN
+            'cloud_assets', 'cdn_custom',   // FluxPress assets / own CDN
+            'images',                       // <picture> AVIF/WebP delivery
             'lcp_preload',                  // LCP
             'lazy_images', 'lazy_iframes', 'lazy_videos', 'add_missing_dims', // Lazy
+            'lazy_css_bg',                  // CSS background lazy load
             'unused_css',                   // Used CSS
             'minify_css', 'minify_js',      // Minify
             'font_display_swap', 'lazyload_fonts', // Fonts
-            'delay_js',                     // Delay JS (includes defer method)
+            'delay_js',                     // Delay JS (includes legacy defer method)
+            'defer_js',                     // Defer JS
             'preconnect',                   // Resource hints (2.5.5)
             'cache',                        // Page cache capture
         );
@@ -1192,8 +1248,13 @@ final class Easy_Optimizer {
                 $buffer = $this->run_processor( 'EasyOpt_Fonts',         $buffer );
                 $buffer = $this->run_processor( 'EasyOpt_Accessibility', $buffer );
                 $buffer = $this->run_processor( 'EasyOpt_SEO',           $buffer );
-                $buffer = $this->run_processor( 'EasyOpt_Delay_JS',      $buffer );
+                // Defer first, Delay second (as WP Rocket does): every script
+                // not excluded from Defer gets `defer`, and Delay keeps it, so
+                // its loader replays plain scripts, then deferred, then async.
                 $buffer = $this->run_processor( 'EasyOpt_Defer_JS',      $buffer );
+                $buffer = $this->run_processor( 'EasyOpt_Delay_JS',      $buffer );
+                // After Delay/Defer, so its own inline script is never delayed.
+                $buffer = $this->run_processor( 'EasyOpt_Lazy_Bg',       $buffer );
                 // Resource hints LAST: it scans the finished document, so it
                 // sees origins introduced by the CDN rewrite, Used CSS font
                 // preloads and the LCP preload rather than the raw markup.
@@ -1301,8 +1362,13 @@ final class Easy_Optimizer {
                 $buffer = $this->run_processor( 'EasyOpt_Fonts',         $buffer );
                 $buffer = $this->run_processor( 'EasyOpt_Accessibility', $buffer );
                 $buffer = $this->run_processor( 'EasyOpt_SEO',           $buffer );
-                $buffer = $this->run_processor( 'EasyOpt_Delay_JS',      $buffer );
+                // Defer first, Delay second (as WP Rocket does): every script
+                // not excluded from Defer gets `defer`, and Delay keeps it, so
+                // its loader replays plain scripts, then deferred, then async.
                 $buffer = $this->run_processor( 'EasyOpt_Defer_JS',      $buffer );
+                $buffer = $this->run_processor( 'EasyOpt_Delay_JS',      $buffer );
+                // After Delay/Defer, so its own inline script is never delayed.
+                $buffer = $this->run_processor( 'EasyOpt_Lazy_Bg',       $buffer );
                 // Resource hints LAST: it scans the finished document, so it
                 // sees origins introduced by the CDN rewrite, Used CSS font
                 // preloads and the LCP preload rather than the raw markup.
@@ -1583,6 +1649,11 @@ function easyopt_finalize_install() {
     delete_option( 'easyopt_cache_preload_last_avg_ms' );
     delete_option( 'easyopt_cache_preload_paused_reason' );
 
+    // (2.8.0) "Delay JS, method = defer" → the separate Defer JS engine.
+    if ( method_exists( 'EasyOpt_Config', 'migrate_legacy_js_method' ) ) {
+        EasyOpt_Config::migrate_legacy_js_method();
+    }
+
     // Stamp the new version BEFORE the clear/preload below so any racing
     // pickup sees the updated value and won't re-enter the update path.
     update_option( 'easyopt_installed_version', EASYOPT_VERSION, false );
@@ -1838,6 +1909,7 @@ register_deactivation_hook( EASYOPT_PLUGIN_FILE, function () {
     // nothing (the classes are gone) and linger in the cron array.
     wp_clear_scheduled_hook( 'easyopt_finalize_install' );
     wp_clear_scheduled_hook( 'easyopt_delayed_preload_start' );
+    wp_clear_scheduled_hook( 'easyopt_cdn_health' ); // (2.8.0) re-added by admin_init on reactivation
 } );
 
 
@@ -1919,7 +1991,7 @@ add_action( 'admin_notices', function () {
         esc_html__( 'FluxCDN paused:', 'easy-optimizer' ),
         sprintf(
             /* translators: %s: previously activated site URL */
-            esc_html__( 'this license was activated for %s, but the site URL has changed. Open the Smart Images tab and reconnect to resume image delivery.', 'easy-optimizer' ),
+            esc_html__( 'this license was activated for %s, but the site URL has changed. Open Media → Images → Smart Images and reconnect to resume image delivery.', 'easy-optimizer' ),
             esc_html( $fp )
         ),
         EasyOpt_Notices::link( 'fluxcdn_fingerprint', $fp_stamp ) // phpcs:ignore WordPress.Security.EscapeOutput
@@ -1941,7 +2013,7 @@ add_action( 'admin_notices', function () {
         printf(
             '<div class="notice notice-warning"><p><strong>%s</strong> %s</p></div>',
             esc_html__( 'FluxCDN paused on this site:', 'easy-optimizer' ),
-            esc_html__( 'this license is now active on a different website (its seat was moved). Images serve from your own server here. Reconnect from the Smart Images tab to move the license back, or upgrade to a multi-site plan.', 'easy-optimizer' )
+            esc_html__( 'this license is now active on a different website (its seat was moved). Images serve from your own server here. Reconnect from Media → Images → Smart Images to move the license back, or upgrade to a multi-site plan.', 'easy-optimizer' )
             . EasyOpt_Notices::link( 'fluxcdn_revoked', $revoked_stamp ) // phpcs:ignore WordPress.Security.EscapeOutput -- link() escapes internally
         );
         return;
@@ -1949,7 +2021,7 @@ add_action( 'admin_notices', function () {
     printf(
         '<div class="notice notice-error"><p><strong>%s</strong> %s</p></div>',
         esc_html__( 'FluxCDN disconnected:', 'easy-optimizer' ),
-        esc_html__( 'your license was revoked or the subscription ended. Images are serving from your own server. Renew your subscription and reconnect from the Smart Images tab.', 'easy-optimizer' )
+        esc_html__( 'your license was revoked or the subscription ended. Images are serving from your own server. Renew your subscription and reconnect from Media → Images → Smart Images.', 'easy-optimizer' )
         . EasyOpt_Notices::link( 'fluxcdn_revoked', $revoked_stamp ) // phpcs:ignore WordPress.Security.EscapeOutput -- link() escapes internally
     );
 } );
@@ -1960,6 +2032,14 @@ add_action( 'wp_head', array( 'EasyOpt_CDN', 'print_fallback_script' ), 4 );
 // FluxCDN (2.5.3): background SSL/delivery re-probe — flips the emission
 // gate to 'ok' once the endpoint provably serves an image over HTTPS.
 add_action( 'easyopt_fluxcdn_reprobe', array( 'EasyOpt_CDN', 'reprobe' ) );
+
+// (2.8.0) CDN health: an unreachable CDN (Cloud asset delivery or the site's
+// own) stops being used until it answers again. Checked every 15 minutes
+// while one is set up.
+add_filter( 'cron_schedules', array( 'EasyOpt_CDN_Assets', 'register_schedule' ) );
+add_action( 'easyopt_cdn_health', array( 'EasyOpt_CDN_Assets', 'check_health' ), 10, 0 );
+add_action( 'admin_init', array( 'EasyOpt_CDN_Assets', 'sync_health_schedule' ) );
+add_action( 'easyopt_settings_saved', array( 'EasyOpt_CDN_Assets', 'on_settings_saved' ), 20, 3 );
 
 add_action( 'admin_notices', function () {
     if ( ! current_user_can( 'manage_options' ) ) {

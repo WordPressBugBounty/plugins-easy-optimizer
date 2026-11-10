@@ -87,32 +87,34 @@ class EasyOpt_Images_Delivery {
     private static function rewrite_img( $m ) {
         $tag = $m[0];
 
-        // data-* driven lazyloaders move the real URL out of src; leave those
-        // to the lazyload module rather than fighting it for the same tag.
-        if ( preg_match( '/\sdata-(src|srcset|lazy|original)\s*=/i', $tag ) ) {
-            return $tag;
-        }
-        if ( ! preg_match( '/\ssrc\s*=\s*(["\'])(.*?)\1/i', $tag, $src_m ) ) {
-            return $tag;
-        }
+        // data-* lazyloaders (a theme's, or ours in JS mode, which runs
+        // first) park the real URL in a data attribute and leave a
+        // placeholder in src, so the parked URL is the one to translate.
+        $lazy_src    = self::first_attr( $tag, array( 'data-src', 'data-lazy-src', 'data-lazy', 'data-original' ) );
+        $lazy_srcset = self::first_attr( $tag, array( 'data-srcset', 'data-lazy-srcset' ) );
+        $lazy        = '' !== $lazy_src || '' !== $lazy_srcset;
 
-        $src = trim( $src_m[2] );
-        if ( '' === $src || 0 === strpos( $src, 'data:' ) ) {
-            return $tag;
+        $src    = '' !== $lazy_src ? $lazy_src : self::first_attr( $tag, array( 'src' ) );
+        $srcset = '' !== $lazy_srcset ? $lazy_srcset : self::first_attr( $tag, array( 'srcset' ) );
+
+        // A data: URI is a placeholder, never something with a variant.
+        if ( 0 === strpos( $src, 'data:' ) ) {
+            $src = '';
+        }
+        if ( 0 === strpos( $srcset, 'data:' ) ) {
+            $srcset = '';
         }
 
         // srcset, when present, is what a modern browser actually uses, so
         // the <source> must mirror it rather than only offering the 1x src.
-        $srcset = '';
-        if ( preg_match( '/\ssrcset\s*=\s*(["\'])(.*?)\1/i', $tag, $ss_m ) ) {
-            $srcset = trim( $ss_m[2] );
+        $candidates = '' !== $srcset ? $srcset : $src;
+        if ( '' === $candidates ) {
+            return $tag;
         }
 
         $sources = array();
         foreach ( EasyOpt_Images::target_formats() as $format ) {
-            $candidate = '' !== $srcset
-                ? self::variant_srcset( $srcset, $format )
-                : self::variant_srcset( $src, $format );
+            $candidate = self::variant_srcset( $candidates, $format );
 
             if ( '' !== $candidate ) {
                 $sources[] = sprintf(
@@ -128,18 +130,39 @@ class EasyOpt_Images_Delivery {
             return $tag;
         }
 
+        // The <source> carries a real srcset because lazyloaders such as
+        // XStore's only ever swap the <img>; one left on data-srcset would
+        // never resolve. The browser now fetches it at parse time, so hand
+        // the deferral to native lazy loading unless the tag chose already.
+        if ( $lazy && ! preg_match( '/\sloading\s*=/i', $tag ) ) {
+            $tag = preg_replace( '/^<img\b/i', '<img loading="lazy"', $tag );
+        }
+
         return '<picture>' . implode( '', $sources ) . $tag . '</picture>';
+    }
+
+    /** First non-empty quoted attribute among $names, or ''. */
+    private static function first_attr( $tag, $names ) {
+        foreach ( $names as $name ) {
+            if ( preg_match( '/\s' . preg_quote( $name, '/' ) . '\s*=\s*(["\'])(.*?)\1/i', $tag, $m ) && '' !== trim( $m[2] ) ) {
+                return trim( $m[2] );
+            }
+        }
+        return '';
     }
 
     /**
      * Translate a srcset (or a single URL) into the variant equivalent.
      *
-     * Returns '' unless EVERY candidate has a variant on disk. A partial
-     * srcset would let the browser pick a descriptor that 404s, which is
-     * worse than not offering the format at all.
+     * A candidate with no variant on disk keeps its original URL, so the
+     * descriptors match the img's exactly and nothing listed can 404.
+     * Missing variants are routine: the optimizer discards any that are not
+     * meaningfully smaller, which every tiny size (a theme's 1x1 lazyload
+     * placeholder, say) hits. Returns '' when no candidate has a variant.
      */
     private static function variant_srcset( $srcset, $format ) {
         $out = array();
+        $hit = false;
 
         foreach ( explode( ',', $srcset ) as $part ) {
             $part = trim( $part );
@@ -151,13 +174,14 @@ class EasyOpt_Images_Delivery {
             $url        = $bits[0];
             $descriptor = isset( $bits[1] ) ? ' ' . $bits[1] : '';
 
-            if ( ! self::variant_exists( $url, $format ) ) {
-                return '';
+            if ( self::variant_exists( $url, $format ) ) {
+                $url .= '.' . $format;
+                $hit  = true;
             }
-            $out[] = $url . '.' . $format . $descriptor;
+            $out[] = $url . $descriptor;
         }
 
-        return $out ? implode( ', ', $out ) : '';
+        return $hit ? implode( ', ', $out ) : '';
     }
 
     /**
@@ -216,12 +240,14 @@ class EasyOpt_Images_Delivery {
         return self::$base_dir . $relative;
     }
 
-    /** Carry the img's sizes attribute onto the source, when present. */
+    /** Carry the img's sizes (or its parked data-sizes) onto the source. */
     private static function sizes_attr( $tag ) {
-        if ( preg_match( '/\ssizes\s*=\s*(["\'])(.*?)\1/i', $tag, $m ) ) {
-            return ' sizes="' . esc_attr( trim( $m[2] ) ) . '"';
+        $sizes = self::first_attr( $tag, array( 'sizes', 'data-sizes', 'data-lazy-sizes' ) );
+        // lazysizes' "auto" is resolved by its script on the img alone.
+        if ( '' === $sizes || 'auto' === strtolower( $sizes ) ) {
+            return '';
         }
-        return '';
+        return ' sizes="' . esc_attr( $sizes ) . '"';
     }
 
     /* ── masking ────────────────────────────────────────────── */

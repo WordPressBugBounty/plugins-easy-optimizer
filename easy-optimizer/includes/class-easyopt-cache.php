@@ -1369,9 +1369,14 @@ class EasyOpt_Cache {
                 self::clear_logged_in_cookie();
             }
             $tag = self::current_user_role_tag();
-            if ( '' !== $tag && ( ! isset( $_COOKIE[ self::ROLE_COOKIE ] ) || $tag !== (string) $_COOKIE[ self::ROLE_COOKIE ] ) ) {
-                self::set_role_cookie( '', 0, time() + 14 * DAY_IN_SECONDS, get_current_user_id() );
-                $_COOKIE[ self::ROLE_COOKIE ] = $tag; // visible to this request's writer
+            // (2.8.0) Re-issue unless the browser holds a cookie signed for
+            // this tag and this login (old unsigned cookies get replaced).
+            $have = \EasyOpt\Cache\verified_logged_in_tag( wp_unslash( $_COOKIE ), self::logged_in_secret(), self::ROLE_COOKIE );
+            if ( '' !== $tag && $tag !== $have ) {
+                $value = self::set_role_cookie( '', 0, time() + 14 * DAY_IN_SECONDS, get_current_user_id() );
+                if ( '' !== $value ) {
+                    $_COOKIE[ self::ROLE_COOKIE ] = $value; // visible to this request's writer
+                }
             }
             return;
         }
@@ -1531,28 +1536,59 @@ class EasyOpt_Cache {
     /**
      * Set the role cookie on login so the drop-in can vary cache by role.
      * Same lifetime as WP's logged_in_cookie. Skipped if the option is off.
+     *
+     * (2.8.0) The value is signed against the login cookie it was issued
+     * with (see \EasyOpt\Cache\logged_in_cookie_value()).
+     *
+     * @return string The cookie value set, or '' when none was.
      */
     public static function set_role_cookie( $logged_in_cookie, $expire, $expiration, $user_id ) {
-        unset( $logged_in_cookie, $expire );
+        unset( $expire );
         if ( ! (int) EasyOpt_Config::get( 'cache_logged_in', 0 ) ) {
-            return;
+            return '';
         }
         $tag = self::role_tag_for_user_id( (int) $user_id );
         if ( '' === $tag ) {
-            return;
+            return '';
+        }
+        // On login WordPress hands us the new login cookie; on a later
+        // request (maybe_set_logged_in_cookie) it is the one the browser sent.
+        $login = (string) $logged_in_cookie;
+        if ( '' === $login && defined( 'LOGGED_IN_COOKIE' ) && isset( $_COOKIE[ LOGGED_IN_COOKIE ] ) ) {
+            $login = (string) wp_unslash( $_COOKIE[ LOGGED_IN_COOKIE ] );
+        }
+        $value = \EasyOpt\Cache\logged_in_cookie_value( $tag, $login, self::logged_in_secret() );
+        if ( '' === $value ) {
+            return '';
         }
         $secure = is_ssl();
         // We only need it visible to PHP — HttpOnly + same path/domain as
         // the auth cookie. Keep it short so it doesn't bloat every request.
         @setcookie(
             self::ROLE_COOKIE,
-            $tag,
+            $value,
             (int) $expiration,
             COOKIEPATH ? COOKIEPATH : '/',
             COOKIE_DOMAIN ? COOKIE_DOMAIN : '',
             $secure,
             true
         );
+        return $value;
+    }
+
+    /**
+     * (2.8.0) Secret that signs the role cookie and names logged-in cache
+     * files. Made the first time it is needed; exported to the drop-in.
+     *
+     * @return string
+     */
+    public static function logged_in_secret() {
+        $secret = (string) get_option( 'easyopt_cache_li_secret', '' );
+        if ( '' === $secret && function_exists( 'wp_generate_password' ) ) {
+            add_option( 'easyopt_cache_li_secret', wp_generate_password( 64, false, false ) );
+            $secret = (string) get_option( 'easyopt_cache_li_secret', '' ); // a racing request may have won
+        }
+        return $secret;
     }
 
     public static function clear_role_cookie() {
@@ -1575,11 +1611,9 @@ class EasyOpt_Cache {
      */
     public static function current_user_role_tag() {
         if ( ! function_exists( 'wp_get_current_user' ) ) {
-            // Fall back to cookie value (good enough for filename matching).
-            if ( isset( $_COOKIE[ self::ROLE_COOKIE ] ) ) {
-                return preg_replace( '/[^a-z0-9_\-]/i', '', (string) wp_unslash( $_COOKIE[ self::ROLE_COOKIE ] ) );
-            }
-            return '';
+            // Fall back to the cookie (good enough for filename matching),
+            // but only a signed one (2.8.0).
+            return \EasyOpt\Cache\verified_logged_in_tag( wp_unslash( $_COOKIE ), self::logged_in_secret(), self::ROLE_COOKIE );
         }
         $u = wp_get_current_user();
         if ( ! $u || empty( $u->ID ) ) {
@@ -1595,7 +1629,8 @@ class EasyOpt_Cache {
         // (2.5.3) Per-user cache instead of per-role — for sites with genuine
         // per-user content (nonce-heavy dashboards, personalised fragments):
         // add_filter( 'easyopt_cache_logged_in_per_user', '__return_true' );
-        if ( apply_filters( 'easyopt_cache_logged_in_per_user', false ) ) {
+        // (2.8.0) The "Separate Cache for Each User" setting is the default.
+        if ( apply_filters( 'easyopt_cache_logged_in_per_user', 1 === (int) EasyOpt_Config::get( 'cache_logged_in_per_user', 0 ) ) ) {
             return 'user-' . (int) $user_id;
         }
         $u = get_userdata( $user_id );
@@ -1804,6 +1839,8 @@ class EasyOpt_Cache {
             // Prefetch Pages observability marker (2.6.7) — see
             // EasyOpt_Navigate::debug_requested().
             'eonavdebug',
+            // (2.8.0) URL Inspector "Test this page" frame — same rule as eopview.
+            'eoptest',
         );
     }
 
@@ -2088,7 +2125,12 @@ class EasyOpt_Cache {
         if ( $rc['cache_logged_in'] ) {
             $role = self::current_user_role_tag();
             if ( '' !== $role ) {
-                $filename .= '-logged-in-' . $role;
+                // (2.8.0) Unguessable name: these files are often fetchable by path.
+                $file_tag = \EasyOpt\Cache\logged_in_file_tag( $role, self::logged_in_secret() );
+                if ( '' === $file_tag ) {
+                    return '';
+                }
+                $filename .= '-logged-in-' . $file_tag;
             }
         }
         // Include-cookie keying (e.g. currency / language switchers). MUST run

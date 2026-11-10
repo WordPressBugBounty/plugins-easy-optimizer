@@ -207,7 +207,7 @@ class EasyOpt_CDN {
 					'code'    => 'activation_limit',
 					'message' => sprintf(
 						/* translators: %s: list of activated site URLs */
-						__( 'This license has reached its site limit (currently active on: %s). Disconnect it on that site (Smart Images tab), or remove the activation from your account dashboard on fluxpress.io, then connect here.', 'easy-optimizer' ),
+						__( 'This license has reached its site limit (currently active on: %s). Disconnect it on that site (Media → Images → Smart Images), or remove the activation from your account dashboard on fluxpress.io, then connect here.', 'easy-optimizer' ),
 						$other_sites ? implode( ', ', array_map( 'sanitize_text_field', $other_sites ) ) : __( 'another site', 'easy-optimizer' )
 					),
 				);

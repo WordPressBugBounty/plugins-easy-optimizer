@@ -1,15 +1,15 @@
-=== Easy Optimizer – PageSpeed, Cache & Core Web Vitals (Unused CSS, Delay JS, Lazy Load) ===
+=== Easy Optimizer – Speed, Cache & Core Web Vitals for PageSpeed (Unused CSS, Delay JS) ===
 Contributors: easywpstuff, uzairwp
 Donate link: https://paypal.me/uzairwp
-Tags: performance, cache, pagespeed, core web vitals, speed
+Tags: speed, cache, core web vitals, pagespeed, lazy load
 Requires at least: 6.4
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 2.7.5
+Stable tag: 2.8.0
 License: GNU General Public License v2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Free all-in-one performance optimization: page cache, unused CSS, delay JS, lazy load, LCP preload and WebP for faster speed and Core Web Vitals.
+Free page speed plugin: page cache, unused CSS, delay JS, lazy load, LCP preload and WebP/AVIF for a higher PageSpeed score and Core Web Vitals.
 
 == Description ==
 
@@ -21,25 +21,28 @@ Every toggle maps to a specific Google Lighthouse recommendation — enable it, 
 
 = Core Features =
 
-* **Full Page Caching:** Serve static HTML with sub-millisecond TTFB, with separate mobile and desktop caches and automatic sitemap-based preloading that warms your pages in the background.
+* **Full Page Caching:** Serve static HTML with sub-millisecond TTFB, with separate mobile and desktop caches and automatic preloading that warms your homepage, menus and content in the background, and again after a full cache clear.
 * **Compression & Browser Caching:** Turn on Gzip or Brotli text compression and long-lived browser-cache (Expires) headers to shrink transfer size and stop repeat visitors re-downloading the same assets — resolving Lighthouse's "Enable text compression" and "Serve static assets with an efficient cache policy".
 * **Redis Object Cache:** Add a persistent object cache that keeps repeated database and option lookups in Redis, cutting MySQL load on dynamic, logged-in and WooCommerce pages. Works with Relay, PhpRedis or the bundled Predis client (no PHP extension required) and reads your host's `WP_REDIS_*` constants automatically. It defers to any object-cache drop-in already installed instead of overwriting it, never edits `wp-config.php`, and includes a one-click flush plus a live status panel (connection, memory, Redis version).
 * **Remove Unused CSS:** Fix Lighthouse's "Reduce unused CSS" by serving a slim, per-page-type stylesheet — eliminating render-blocking CSS and lifting your LCP. A built-in fail-safe keeps your original styles until a valid stylesheet is generated, so pages never render unstyled.
 * **Minify CSS & JavaScript:** Strip comments and whitespace from your local CSS and JS files, caching each minified file on disk so it is processed only once. Already-minified files are skipped, and relative `url()`/`@import` paths are rewritten so assets keep resolving. Works independently of Remove Unused CSS and Delay JS.
-* **Delay & Defer JavaScript:** Cut Total Blocking Time and improve INP by delaying script execution until user interaction, or by deferring scripts natively. jQuery is excluded by default, and you can exclude any script that needs to run early.
-* **Smart Lazy Loading:** Defer offscreen images, iframes, videos and CSS background images, and add missing width/height attributes to prevent layout shift (CLS).
+* **Delay & Defer JavaScript:** Cut Total Blocking Time and improve INP by delaying script execution until user interaction, deferring scripts natively, or both, each with its own exclusion list. jQuery is excluded by default, common analytics, ads and chat tags and your active plugins can be excluded in one click, and a script's dependencies and inline data stay with it.
+* **Smart Lazy Loading:** Defer offscreen images, iframes, videos and CSS background images, show a preview image in place of YouTube players until the visitor presses play, and add missing width/height attributes to prevent layout shift (CLS).
 * **Automatic LCP Preload:** Detect each page's Largest Contentful Paint image and preload it — including responsive `srcset`, `<picture>` and CSS background heroes — stored per URL so every page preloads its own correct hero for faster visual loading.
-* **Image CDN (WebP & AVIF):** Rewrite your image URLs to a global CDN that serves modern WebP/AVIF formats and every responsive size, addressing Lighthouse's "Serve images in next-gen formats". Optional and off until you enable it.
-* **Prefetch Pages:** Start loading the next page while the visitor is still deciding. Easy Optimizer writes one compact set of browser speculation rules into the top of every page, so the browser itself picks the moment — a short hover starts a lightweight prefetch, and the mouse going down starts a full prerender. No JavaScript scans your links, so a page with 50 links costs no more than a page with 10. Cart, checkout, account, feed, admin, download and query-string URLs are never touched, and while it is on it replaces WordPress's own speculative loading so a page never carries two competing rule sets.
+* **Image Optimization (WebP & AVIF):** Convert your images to WebP and AVIF on your own server for free, and serve the smaller file to browsers that support it, or connect the optional Cloud Optimization CDN (paid, 14-day trial) to deliver every image resized for each device. Resolves Lighthouse's "Improve image delivery".
+* **Prefetch Pages:** Start loading the next page while the visitor is still deciding. Easy Optimizer writes one compact set of browser speculation rules into the top of every page, so the browser itself picks the moment — a short hover starts a lightweight prefetch, and, if you switch on prerendering, the mouse going down starts a full prerender. A small inline script also predicts the likeliest next page, such as your most-linked page or a link where a phone stops scrolling, up to four pages per visit. Cart, checkout, account, feed, admin, download and query-string URLs are never touched, and while it is on it replaces WordPress's own speculative loading so a page never carries two competing rule sets.
 * **Font Optimization:** Add `font-display: swap` so text stays visible during webfont loads, with optional per-device font preloading learned from a lightweight beacon.
-* **Bloat Removal:** 15 independent toggles to safely switch off unused WordPress core scripts and features (emojis, embeds, XML-RPC, jQuery Migrate, Dashicons, Block Library CSS and more).
+* **WordPress Cleanup:** 15 independent toggles to safely switch off unused WordPress core scripts and features (emojis, embeds, XML-RPC, jQuery Migrate, Dashicons, Block Library CSS and more).
 * **Database Cleanup & Optimization:** Schedule cleanups of revisions, auto-drafts, trashed posts, spam and transients — each with a pre-cleanup snapshot so you can restore safely. The built-in Autoload Health auditor finds the heaviest autoloaded options and lets you switch off the ones you don't need, directly resolving the Site Health warning "Autoloaded options could affect performance."
 * **Heartbeat & Cron Manager:** Limit WordPress Heartbeat frequency and throttle WP-Cron from the dashboard (no `wp-config.php` edits), and view, run or delete scheduled cron events.
+* **Your Own CDN:** Serve CSS, JavaScript, fonts and images from your own CDN address (any pull-zone or CNAME CDN). A failed stylesheet falls back to your site, and a CDN that stops answering is set aside until it is back.
 * **Cloudflare Integration:** Purge your Cloudflare edge cache (tag-based or full zone) whenever the page cache clears, and test your API connection instantly without saving credentials first.
 * **Hosting Integrations:** Detect your environment and purge server-level cache on managed hosts including Kinsta, WP Engine, SiteGround, Cloudways, GridPane, RunCloud, SpinupWP, Rocket.net and WordPress.com.
 * **Accessibility & SEO Fixes:** Resolve common Lighthouse accessibility warnings in real time — missing form labels, ARIA names, iframe titles and un-crawlable links — without editing your theme.
 * **PageSpeed Speed Test:** Run a Google PageSpeed test from your dashboard and compare your score with and without Easy Optimizer, for both mobile and desktop, including Core Web Vitals (LCP, CLS, INP). Works out of the box, or add your own free Google API key for unlimited tests.
 * **Debug Issues Panel:** If a page ever looks wrong, switch individual optimizations off for a single page load and find the cause in a couple of clicks — no settings changed, no cache cleared, and no private browsing window needed. It tells you which feature caused it and takes you straight to the exclusion field that makes the fix permanent.
+* **URL Inspector:** See everything Easy Optimizer knows about one page — cache, preload, Used CSS, LCP element and which rules skip it — and "Test this page" to catch JavaScript errors with a suggested fix for each.
+* **WP-CLI & AI Diagnostics:** Clear the cache, run the preload, inspect a page and export or import settings with `wp easyopt`. On WordPress 6.9+, AI assistants connected through the MCP Adapter can read diagnostics (never credentials, never changes).
 * **Find Slow Plugins & Themes (Backend Analyzer):** Profile any page or your admin area on demand to see exactly which plugins, themes and database queries take the most time — so you can pinpoint what is slowing your site down. Nothing runs for real visitors, so there is no added overhead.
 
 = PageSpeed Insights & Lighthouse Recommendations Addressed =
@@ -48,16 +51,19 @@ Lighthouse 13 renamed and merged many performance audits. Where the name changed
 
 **Performance**
 
-* Render blocking requests (was: Eliminate render-blocking resources)
-* Reduce unused CSS
-* Minimize main-thread work
-* Improve image delivery (was: Serve images in next-gen formats / Properly size images)
-* Layout shift culprits (was: Image elements do not have explicit width and height)
-* LCP request discovery (was: Preload Largest Contentful Paint image)
-* Font display (was: Ensure text remains visible during webfont load)
-* Use efficient cache lifetimes (was: Serve static assets with an efficient cache policy)
-* Document request latency (was: Enable text compression / Reduce server response time)
-* Network dependency tree (was: Preconnect to required origins)
+* Render blocking requests (was: Eliminate render-blocking resources) — Remove Unused CSS, Defer JavaScript
+* Reduce unused CSS — Remove Unused CSS
+* Reduce unused JavaScript — Delay JavaScript Execution
+* Minimize main-thread work — Delay JavaScript Execution
+* Third parties — Delay JavaScript Execution, YouTube preview image
+* Minify CSS / Minify JavaScript — Minify CSS, Minify JavaScript
+* Improve image delivery (was: Serve images in next-gen formats / Properly size images) — Optimize images on this server (WebP/AVIF), Cloud Optimization
+* Layout shift culprits (was: Image elements do not have explicit width and height) — Add Missing Image Dimensions
+* LCP request discovery (was: Preload Largest Contentful Paint image) — Preload LCP
+* Font display (was: Ensure text remains visible during webfont load) — Force Font Display Swap
+* Use efficient cache lifetimes (was: Serve static assets with an efficient cache policy) — Browser Caching
+* Document request latency (was: Enable text compression / Reduce server response time) — Page Cache, Gzip / Brotli Compression
+* Network dependency tree (was: Preconnect to required origins) — Preconnect, Smart Preload Fonts
 
 **Accessibility**
 
@@ -88,13 +94,17 @@ Lighthouse 13 renamed and merged many performance audits. Where the name changed
 
 Easy Optimizer is a genuine free alternative to paid performance plugins such as WP Rocket, FlyingPress and Perfmatters: page caching, Remove Unused CSS, Delay/Defer JavaScript, LCP preload, lazy load, Cloudflare and hosting-cache purging, database cleanup and the Backend Analyzer are all included, with no premium-locked features and no upsells. Run it as a complete all-in-one, or use just the tools you need alongside your existing setup — the only rule is to never run two of the same optimization (especially two page caches) at once.
 
+= Want It Done for You? =
+
+Easy Optimizer is free, and you can set it up yourself in a few minutes. If you would rather hand the job over, our [WordPress speed optimization service](https://fluxpress.io/services/wordpress-speed-optimization/) sets up caching, fixes render-blocking requests and unused CSS, optimizes your images and works through your Core Web Vitals for you.
+
 == Installation ==
 
 1. In your WordPress admin, go to **Plugins → Add New** and search for "Easy Optimizer", or upload the plugin to `/wp-content/plugins/easy-optimizer/`.
 2. Activate the plugin.
 3. Open **Easy Optimizer** in the admin sidebar. On a new install the setup wizard opens automatically — nothing is enabled until you choose a preset.
 4. Pick a preset: **Safe** (best for shared hosting), **Balanced** (recommended for most sites) or **Maximum**. If you're not sure, choose **Balanced**.
-5. Save. The cache preloader starts warming your site automatically. You can fine-tune any individual feature from the tabs at any time, and the Settings tab includes a one-click **Safe Mode** if you ever need a known-good baseline.
+5. Save. The cache preloader starts warming your site automatically. You can fine-tune any individual feature from the tabs at any time, and the top bar includes a one-click **Safe Mode** if you ever need a known-good baseline.
 
 == Frequently Asked Questions ==
 
@@ -105,7 +115,7 @@ The only rule is simple: don't run the same optimization twice. Every module is 
 
 This means you can use Easy Optimizer as a complete all-in-one replacement, or keep your current setup and use only the parts you want — for example the Backend Analyzer, Autoload Health, database cleanup, or heartbeat and cron controls — while another plugin keeps doing the caching. Either way works.
 
-= How is Easy Optimizer different from WP Rocket, FlyingPress or Perfmatters? =
+= Is Easy Optimizer a free alternative to WP Rocket, FlyingPress or Perfmatters? =
 Easy Optimizer is free and open, with no premium-locked core features and no upsells: caching, Remove Unused CSS, Delay/Defer JS, LCP preload, lazy load, Cloudflare and hosting-cache purging, database cleanup and the Backend Analyzer are all included. Those paid plugins are mature and excellent; Easy Optimizer aims to give you the same core speed wins for free, and to coexist cleanly if you already run one — just don't run two of the same optimization at once.
 
 = Something on my site looks broken — how do I find which feature caused it? =
@@ -114,7 +124,7 @@ Use the **Debug Issues** button in the top bar. Pick the page that looks wrong, 
 You do not need a private browsing window. Some optimizations are normally skipped while you are logged in, so the panel's links quietly render the page the way a visitor sees it. If the page is still wrong with everything switched off, the cause is your theme, another plugin or your server — and the panel says so rather than sending you round the loop again.
 
 = Will Easy Optimizer speed up my WooCommerce store? =
-Yes. Every optimization module runs on your shop, while Cart, Checkout and My Account are automatically excluded so the purchase flow is never cached or altered — including custom or translated slugs. Multi-currency stores cache a correct copy per selected currency, and you can disable WooCommerce cart fragments from the Bloat Removal tab to speed up pages that don't need them.
+Yes. Every optimization module runs on your shop, while Cart, Checkout and My Account are automatically excluded so the purchase flow is never cached or altered — including custom or translated slugs. Multi-currency stores cache a correct copy per selected currency, and you can disable WooCommerce cart fragments from Backend → WordPress Cleanup to speed up pages that don't need them.
 
 = Does it work on Nginx, LiteSpeed and OpenLiteSpeed, or only Apache? =
 All of them. On Apache it can optionally write `.htaccess` rules (after a per-server safety probe that prevents a bad rule from ever 500-ing your site); on Nginx, LiteSpeed and OpenLiteSpeed it serves cached pages through PHP. On hosts with their own server-level cache (Varnish / LiteSpeed / nginx FastCGI), preloading and on-visit caching are handled correctly.
@@ -126,22 +136,52 @@ Defer keeps scripts in order but runs them after HTML parsing; it is the safer c
 Usually not. Delayed scripts run on the first interaction, so analytics and pixels still fire for engaged visitors. If you need a tag to load immediately — for example to measure bounces or run consent logic — add it to the Delay JS exclusion list and it will load normally.
 
 = My site looks broken after enabling Remove Unused CSS — how do I fix it? =
-Add the affected stylesheet or CSS selector to the exclusion fields on the CSS tab and rebuild. Remove Unused CSS also learns JavaScript-generated classes (sliders, menus, tabs) automatically so their styles aren't stripped. To confirm it really is the cause, use the Debug Issues panel. To revert quickly, use Safe Mode on the Settings tab to return to a conservative baseline.
+Add the affected stylesheet or CSS selector to the exclusion fields under Optimization → CSS and rebuild. Remove Unused CSS also learns JavaScript-generated classes (sliders, menus, tabs) automatically so their styles aren't stripped. To confirm it really is the cause, use the Debug Issues panel. To revert quickly, use Safe Mode in the top bar to return to a conservative baseline.
 
 = How do I exclude a page from caching, or a script from Delay JS? =
-Use the exclusion fields on each tab — the Cache tab has URL and cookie exclusions for pages you never want cached, and the JavaScript tab lets you exclude scripts by name or URL from Delay/Defer. For a one-off test, the Debug Issues panel builds the right link for you; you can also append `?nocache`, `?nodelayjs`, `?norucss` or `?nooptimize` to any front-end URL by hand to disable that feature for that single request.
+Use the exclusion fields on each tab — Cache → Rules has URL and cookie exclusions for pages you never want cached, and Optimization → JavaScript lets you exclude scripts by name or URL from Delay/Defer. For a one-off test, the Debug Issues panel builds the right link for you; you can also append `?nocache`, `?nodelayjs`, `?norucss` or `?nooptimize` to any front-end URL by hand to disable that feature for that single request.
 
 = Does it minify and combine CSS and JavaScript? =
 It minifies your local CSS and JS (caching each file on disk and processing it once). It does not force-combine files into one — under HTTP/2 and HTTP/3 that usually no longer helps and can hurt caching — so Easy Optimizer focuses on minification, delay/defer and removing unused CSS instead.
 
 = Do I need a CDN to use Easy Optimizer? =
-No. Every core feature works without a CDN. If you want next-gen image delivery you can optionally enable the built-in Image CDN (WebP/AVIF), and you can connect Cloudflare for edge-cache purging — but neither is required.
+No. Every core feature works without a CDN, including WebP and AVIF conversion on your own server. Cloud Optimization can optionally deliver images resized for each device, and you can connect Cloudflare for edge-cache purging, but neither is required.
 
 = Will it slow down my wp-admin dashboard? =
 No. Optimization features run on your front end, and modules you don't enable are never loaded, so your admin stays responsive. The Backend Analyzer's profiling is on-demand and never runs for real visitors.
 
 = What's the best starting configuration to improve my PageSpeed / Core Web Vitals score? =
 Enable Page Cache, Remove Unused CSS, Delay or Defer JavaScript, Lazy Load, LCP Preload and Font Display Swap, then turn on the accessibility and SEO toggles relevant to your site. Save and re-run the built-in speed test to compare before and after. The dashboard's "What to fix next" card then lists what is still worth changing, ranked by impact, so you don't have to guess. If you used the setup wizard, the Balanced preset already enables most of these.
+
+= How do I fix "Render blocking requests" in WordPress? =
+Turn on Remove Unused CSS (Optimization → CSS) so each page gets only the styles it uses, and Defer JavaScript (Optimization → JavaScript) so scripts stop holding up the first paint. Force Font Display Swap (Media → Fonts) keeps text visible while web fonts load. Re-run the speed test on the Dashboard to see the change.
+
+= How do I fix "LCP request discovery" in WordPress? =
+Turn on Preload LCP (Media → Preload LCP). Easy Optimizer measures each page's main image, including `srcset`, `<picture>` and CSS background heroes, then preloads it with high priority and makes sure it is never lazy-loaded.
+
+= How do I fix "Improve image delivery" in WordPress? =
+Turn on "Optimize images on this server" (Media → Images) to convert your images to WebP and AVIF for free; browsers that support them get the smaller file. To deliver every image resized for each device, connect Cloud Optimization (optional, paid). Add Missing Image Dimensions (Media → Lazy Load) also stops images from moving the layout as they load.
+
+= How do I fix "Use efficient cache lifetimes" in WordPress? =
+Turn on Browser Caching (Cache → Page Cache). On Apache and LiteSpeed it adds long-lived cache headers for images, CSS, JavaScript and fonts, so repeat visitors don't download them again. On Nginx these headers come from your server configuration, so ask your host to add them.
+
+= How do I fix "Document request latency" or a slow TTFB? =
+Turn on Page Cache so visitors get a ready-made copy instead of WordPress building the page, and Gzip / Brotli Compression (Cache → Page Cache, Apache and LiteSpeed) to shrink it. For pages that can't be cached, such as logged-in or cart pages, Object Cache (Backend → Object Cache) cuts database time, and the Backend Analyzer (Diagnostics) shows which plugin or theme is slow.
+
+= How do I fix "Network dependency tree" in WordPress? =
+Turn on Preconnect (Cache → Page Cache) so the browser connects early to the other sites your page loads files from, and Smart Preload Fonts (Media → Fonts) so each page's fonts start downloading before the CSS that asks for them. Remove Unused CSS also takes stylesheets out of the critical path.
+
+= How do I fix "Layout shift culprits" (CLS) in WordPress? =
+Turn on Add Missing Image Dimensions (Media → Lazy Load) so images reserve their space before they load, and Force Font Display Swap (Media → Fonts). Shifts caused by ads, cookie banners or content added by other scripts come from those scripts and have to be fixed there.
+
+= How do I fix "Reduce unused JavaScript" and "Minimize main-thread work"? =
+Turn on Delay JavaScript Execution (Optimization → JavaScript). Scripts wait until the visitor scrolls, taps or moves the mouse, so they no longer run while the page loads. For the safest start, turn on "Delay external scripts only", and use One-click exclusions for any script that must run straight away.
+
+= Can Easy Optimizer fix "Forced reflow" or "Legacy JavaScript"? =
+Not directly. Both come from the code of your theme or another plugin: forced reflow when a script reads the layout while changing it, legacy JavaScript when a file is built for old browsers. If that script isn't needed while the page loads, Delay JavaScript Execution keeps it out of the way; otherwise ask its author for an updated version.
+
+= Why does my Core Web Vitals assessment fail when my PageSpeed score is green? =
+The Core Web Vitals assessment at the top of PageSpeed Insights uses real visits from the last 28 days (Chrome UX Report), while the score below it comes from one lab test. After you change settings, the score moves straight away, but the assessment takes up to 28 days to catch up. Sites with little traffic may show no assessment at all.
 
 = Which preset and preload speed should I use for my hosting? =
 As a rule of thumb — shared hosting: the Safe wizard preset with the Gentle preload speed; most sites and managed hosting: Balanced; VPS or high-performance managed hosting: Maximum with the Turbo (or Balanced) preload speed. Preload also auto-tunes to your server's real capacity and backs off automatically if it detects errors or rate-limiting, so you can't overload your host.
@@ -153,7 +193,7 @@ The Object Cache module needs a running Redis server (many shared hosts ship the
 Both count unique URLs, not files. With Separate Mobile Cache on, one page can have a desktop copy and a mobile copy on disk, but it is still one page in both figures. The two numbers are not meant to converge: a page whose desktop copy is cached while its mobile copy is still queued is legitimately counted in each at the same time.
 
 = Can I use this with Cloudflare? =
-Yes. Add your API token and Zone ID in the Cloudflare tab. Cache purges sync automatically.
+Yes. Add your API token and Zone ID under Cloudflare & CDN. Cache purges sync automatically.
 
 = Does it support multisite? =
 Works on individual sites within a multisite network.
@@ -205,254 +245,161 @@ Easy Optimizer's usage analytics are opt-in and disabled by default. When enable
 6. LCP preload — automatic detection with zero configuration; URL exclusion for edge cases.
 7. Prefetch pages — eagerness selection, prerender toggle, URL and CSS selector exclusions.
 8. Font optimization — font-display:swap and lazy-load font stylesheets with exclusion support.
-9. Bloat removal — 15 independent toggles for emojis, embeds, XML-RPC, jQuery Migrate, version meta, RSD/WLW, shortlinks, RSS, self-pingbacks, REST API, Heartbeat, cart fragments, App Passwords, Dashicons and Block Library CSS.
-10. Cloudflare — API token and zone ID with test connection button, purge strategy selection.
+9. WordPress Cleanup — 15 independent toggles for emojis, embeds, XML-RPC, jQuery Migrate, version meta, RSD/WLW, shortlinks, RSS, self-pingbacks, REST API, Heartbeat, cart fragments, App Passwords, Dashicons and Block Library CSS.
+10. Purge & CDN — Cloudflare API token and zone ID with test connection button, purge strategy selection.
 11. Database cleanup — task toggles with item counts, scheduled cleanup, snapshot and restore, chunked processing.
 12. Autoload health — total autoload size, per-option size breakdown, one-click autoload disable/enable with core option protection.
 13. Heartbeat & Cron — heartbeat location and frequency control, WP-Cron throttle, cron event viewer with manual run and delete.
-14. Accessibility & SEO — eight accessibility audit toggles and two SEO audit toggles with clear Lighthouse audit descriptions.
+14. Lighthouse Fixes — eight accessibility audit toggles and two SEO audit toggles with clear Lighthouse audit descriptions.
 
 == Changelog ==
 
+= 2.8.0 =
+* Changed: a new admin layout. The sidebar is shorter: Dashboard, then Speed (Cache, Optimization, Media, Cloudflare & CDN), Server (Backend), Tools (Lighthouse Fixes, Diagnostics), Cloud Optimization and Settings. Each section's pages are tabs across the top, settings are grouped into cards, every main on/off switch is the same size, and every exclude list opens in a popup. Nothing was removed and your settings are unchanged. Bloat Removal is now WordPress Cleanup, under Backend, and Autoload Health has its own tab there.
+* Fixed: on sites using plain permalinks, the URL Inspector, the Debug Issues page check, Backend Analyzer's per-page results and the Compatibility refresh failed with a "No route" error.
+* Fixed: the dashboard speed test could stay on "Testing your site… 0/4 done" forever, with no way to run it again, if its background request was stopped before it finished, for example by a host time limit. After 10 minutes it now says what happened and the Run button comes back. It won't restart by itself after that, and it tries again if it was only held up by another run.
+* New: Delay JavaScript and Defer JavaScript can now be on together, each with its own exclusion list. Before, Defer was a mode of Delay and they shared one list. Existing settings carry over unchanged: a site that deferred keeps deferring, with the same exclusions.
+* New: "Delay external scripts only" in One-click exclusions under Delay JavaScript Execution, off by default. Your site's own scripts and jQuery run as normal, while analytics, ads and chat scripts wait for the first interaction. Much less likely to break anything, but scores improve less.
+* New: one-click Delay JavaScript exclusions. Tick an analytics, ads or chat tag, or an active plugin or theme, to keep its scripts running on page load. Nothing is ticked for you. Entries survive Minify JavaScript renaming files.
+* Improved: Delay JavaScript keeps what an excluded script needs with it: its WordPress dependencies and its inline data (`-js-extra`, `-js-before`, `-js-after`) run straight away too.
+* Changed: Defer JavaScript now defers every script file except the ones you exclude, jQuery (while Exclude jQuery is on) and a built-in list of scripts known to break when deferred. Inline code that uses jQuery waits until the page has loaded. Defer now runs before Delay.
+* New: URL Inspector (Diagnostics). Enter a page address to see, in one place, whether it is cached for desktop and mobile, its last preload result, its Used CSS, its measured LCP element, the JavaScript settings that apply and which exclusion rules skip it.
+* New: "Test this page" in the URL Inspector loads the page as a visitor would, at desktop and at phone width, in a frame only you can see, records JavaScript errors and suggests the exclusion that fixes each one. Nothing changes for real visitors.
+* New: "Replace YouTube videos with a preview image" (Lazy Load, under iframes). The video player loads only when the visitor presses play. Off by default; embeds controlled by a script, playlists and autoplaying videos are left alone.
+* New: "Lazy Load CSS Background Images". Background images set in the page's inline `<style>` blocks, including inline Used CSS, load as they come near the screen. The LCP image and your lazy load exclusions are never deferred. Off by default.
+* New: "Your own CDN" (Cloudflare & CDN). Enter your CDN's address and CSS, JavaScript, fonts, images and video under /wp-content/ and /wp-includes/ load from it, with srcset and preloads kept in step. Script modules stay on your site, and if your CDN sends no CORS header, so do fonts and stylesheets; "Check now" tells you. It is used only while FluxPress asset delivery is off.
+* New: CDN safety net. If a stylesheet or script fails to load from a CDN, it loads from your site instead. A check every 15 minutes stops using a CDN that does not answer, and starts again when it does. A new CDN address is checked when you save it and is never used if it cannot be reached. "Check now" shows the result.
+* Fixed: Cloud Optimization no longer loads script modules, such as the Navigation block's, from the CDN. Browsers need extra permission (CORS) to load them from another address, and the page's import map already points to your site.
+* Fixed: with bbPress, forum, topic and reply pages, along with topic tags and profiles, are no longer warmed ahead of visitors. They are cached when someone visits them, so a large forum no longer fills the preload or logs hundreds of warnings.
+* Improved: a page the preload cannot cache is retried up to 3 times, then left until the next full preload. The log shows one line per check instead of one per page, with the server's answer for one of them.
+* Fixed: Remove Unused CSS now notices when a stylesheet changes, for example after a theme or plugin update. That page serves the original stylesheets while its Used CSS is rebuilt in the background, instead of keeping the old Used CSS. A rebuilt file replaces the old one only once it is complete.
+* Improved: saving settings no longer waits for the cache to be cleared.
+* Fixed: in Apache mode, visitors with a cookie on your "Never cache for cookies" list were still served cached pages straight from the server. The server rules now include your list.
+* Security: all stored credentials (Cloudflare token, Redis password, PageSpeed API key, legacy Image CDN key and licence) are now kept out of the autoloaded settings and are never sent to the browser. Their fields are write-only and show only that a value is saved.
+* Fixed: settings exports included the PageSpeed API key and the legacy Image CDN licence. Every credential is now left out. Restoring the Safe Mode snapshot no longer deletes saved credentials and licence keys.
+* Security: a request is treated as the preload's own only when its marker is signed. Sites that upgraded from before 2.6.0 without a preload secret trusted any unsigned marker; the secret is now created before the first preload. The LCP beacon no longer accepts the token used by 2.5.x pages (the `easyopt_beacon_accept_legacy_token` filter turns it back on).
+* New: WP-CLI commands: `wp easyopt cache clear [<url>]`, `wp easyopt cache status`, `wp easyopt preload start|stop|status`, `wp easyopt inspect <url>` and `wp easyopt settings export|import`.
+* New: read-only diagnostics for AI assistants (WordPress 6.9 Abilities API, reached over MCP through the MCP Adapter plugin): settings without credentials, what a setting does, a page's status, preload health, conflicts and a redacted error log. Administrators only; nothing can be changed through them. Turn off with the `easyopt_enable_abilities` filter.
+* Improved: the Fonts tab explains that Smart Preload Fonts and Smart Lazyload Fonts follow Remove Unused CSS page by page.
+* Improved: after you start a Cloud Optimization trial, the Cloud Optimization page waits for your license key. It shows the address the key was emailed to, with the paste box at the top, and keeps asking after a reload or a closed tab. The Cloud bar on every other screen says the same until the key is in. Before, one line said to check your email, and a reload brought back the trial offer.
+* Fixed: wording in the plugin and this readme that promised more than the plugin does, such as prerendering in Prefetch Pages, which is optional.
+* Security: with "Cache for logged-in users" on, cached copies are tied to a signed cookie, so a forged cookie can no longer open another user's or role's cached page. New "Separate Cache for Each User" setting, off by default.
+* Fixed: in .htaccess mode with Separate Mobile Cache on, some phones were served the desktop copy. The server rules now use the same phone test as the plugin.
+* Fixed: the preload could stop after a few pages on some hosts, for example behind a CDN that blocks bursts of requests, and wait until a visitor happened to start WP-Cron. Easy Optimizer now sends its background requests straight to your own server, and opening wp-admin restarts a stalled preload.
+* Fixed: preload results no longer list addresses from 404 pages (such as bots probing for old theme files) or files under /wp-content/ and /wp-includes/. Rows an earlier run left "pending" are cleared.
+* Improved: the Warm-up status card now says first whether a preload is running: "Preloading. 3 pages waiting, 120 pages cached." or "Preload finished. 120 pages cached."
+
 = 2.7.5 =
-* Fixed: Independent Analytics stopped counting visitors when Bloat Removal → "Limit REST API to Logged-in Users" was on. Independent Analytics records each page view through the REST API as a logged-out visitor, and the toggle refused those requests. Its address is now allowed, like contact forms and the WooCommerce Store API. Sites were affected from 2.7.4, when Bloat Removal toggles began to take effect.
-* Fixed: with Delay JavaScript on, Independent Analytics missed visitors on Mac and Linux computers who left without scrolling, moving the mouse or typing. Its tracking script is now never delayed.
+* Fixed: Independent Analytics counts visitors again with "Limit REST API" or Delay JavaScript on.
 
 = 2.7.4 =
-* Fixed: with bbPress, a new reply now clears the cached topic page (including its later pages), its forum, the parent forums and the forums index. Before, it cleared only the reply's own address, so visitors kept seeing the thread without the reply until the cache expired. The person who posted saw it, because logged-in users and guests who have posted skip the cache. Edits, approvals, spam and trash clear the same pages.
-* Fixed: with "Post Comments as bbPress Topics", a reply now also clears the post or page that shows the topic.
-* Improved: image optimization encodes several images at once on servers with spare CPUs: half the CPUs the site may use, up to 3 at a time. It used to encode one image at a time on any server, so a large library took a day or more. Shared hosting with one or two CPUs keeps encoding one at a time. Set `EASYOPT_IMAGES_CONCURRENCY` in wp-config.php to choose the number (up to 8).
-* Improved: image optimization no longer pauses for half a second after each image, and "Optimize all" now starts its workers once instead of once per 200 images queued.
-* Fixed: an image the server kept stopping part-way through (PHP time or memory limit) was retried forever, ahead of every other image, so optimization looked stuck. It is now skipped after two tries and the reason is recorded. Each encode also gets its own time allowance, so one large image no longer runs past the PHP time limit, and a long image is no longer picked up a second time by another worker while it is still being encoded.
-* Fixed: Bloat Removal toggles had no effect. The setting that tells Easy Optimizer any toggle is on was saved in one place and read from another, so nothing was ever removed. Every toggle now applies from the next page load.
-* Fixed: "Disable Embeds" now also removes the wp-embed script, and Heartbeat control now stops Heartbeat on the front end as chosen. Both removals were registered too late in WordPress's start-up to ever run.
-* Fixed: upgrading a Free Trial from the Smart Images panel. The Upgrade button answered "This account is already on a paid plan", and even a purchase that went through was not picked up by the site until the licence key was pasted in by hand. After paying, the site now moves to the paid plan by itself: straight away while the panel is open, otherwise at the next background check (about every 10 minutes). Image delivery continues throughout.
-* Fixed: Cloud Optimization recognises a 14-day trial. The panel showed a trial license as a paid plan; it now shows "Trial · N days left" and an Upgrade button that upgrades the license you already have. When a trial runs out the site stays connected, serving from your own server, and Upgrade switches it straight back on, with no key to paste again.
-* Fixed: a license key is checked before it is sent, so a mis-paste gets a clear answer straight away. License and connection errors are now in plain words. Before, the licensing service's own developer messages could be shown, such as "The license_key string is limited to 32 characters."
-* Fixed: some valid license keys were changed when saved (keys containing characters such as % followed by two letters or digits, or < >), which made the connection fail.
-* Fixed: messages in the Cloud Optimization panel are colored: errors in red, success in green. Wording across the license screens and notices is updated; out-of-date references to "fpfree_" account keys and a free plan are gone, and the notice for a license that stopped working no longer says "subscription ended" for every case.
-* Improved: connecting and disconnecting are faster. Connecting saves its settings once instead of about twenty times, the panel reloads without a fixed one-second pause, and the screen after checkout no longer reconnects the site every five seconds while it waits for the purchase.
-* Fixed: a WebP or AVIF copy now appears under its real name only once it is complete. Before, the file existed empty while it was being encoded, so a page shown at that moment could point at an empty image, and a worker stopped at that moment left the empty file in place.
+* Fixed: Bloat Removal toggles now take effect; bbPress replies clear the cached topic and forum; faster image optimization.
 
 = 2.7.3 =
-* New: Restore original or Optimize a single image from the Media Library. A status column in the list view and a row in the image details panel show whether each image is optimized, skipped or restored. An image you restore yourself is left alone by later "Optimize all" runs until you choose Optimize for it again.
-* New: a Stop button for a running image optimization. Images already done stay optimized, and "Optimize remaining" continues from where it stopped.
-* New: two Accessibility fixes, off by default. "Skip links are not focusable" points a "Skip to content" link whose target is missing (common with Elementor full-width layouts) at the page's main content. "Document does not have a main landmark" marks the main content area for screen readers on layouts that have none (Elementor, Divi). Both only add attributes; nothing on the page is moved or removed, and pages that already pass are left unchanged.
-* Fixed: the image optimization progress ("8 of 202 done, 192 to go") now adds up on every refresh. The done count lagged up to 20 seconds behind the to-go count and left out images that were skipped because no smaller copy was possible.
-* Fixed: restoring an image whose original had been resized no longer queues it to be optimized and resized again straight away.
-* Improved: less background load. The every-minute background check now runs only while there is work queued (preload, image optimization), instead of all the time. On hosts where WP-Cron runs off visitor traffic, an idle site no longer starts a background request about once a minute.
-* Improved: a visitor's browser now remembers that it already reported a page's measurements, so a page served from a page cache or CDN is not reported again by the same visitor on later visits. A page rendered again, for example after its data was cleared, still reports.
-* Removed: two usage-statistics events (Smart Images tab viewed, connect attempted) that only opted-in sites sent. They added noise without measuring anything new.
-* Fixed: Cloud Optimization now notices an ended licence even on sites where WP-Cron does not run. Previously such a site kept pointing its files at the CDN, which redirected every file back to the site (an extra round trip each). An overdue status check now runs after a page has been sent to the visitor, so nobody waits for it; on servers that cannot do that, nothing changes.
+* New: optimize or restore a single image from the Media Library, a Stop button for image optimization, two accessibility fixes.
 
 = 2.7.2 =
-* Fixed: Remove Unused CSS stopped reading a stylesheet partway through when it met a Tailwind arbitrary-value class such as `bg-[url('/hero.png')]`. Every rule after that point was missing from the critical CSS until the visitor interacted, so padding, gradients and image fitting could jump on first paint. Escaped selectors are now read correctly and matched to the classes on the page.
-* Fixed: with Cloud Optimization connected, the script that loads deferred stylesheets was printed twice. It is now printed once.
-* Fixed: an iframe or image inside `<noscript>` (for example the Google Tag Manager fallback) was being lazy-loaded. Lazy-loading also skipped the wrong elements around the admin bar and could miss `<picture>` sources. All three now behave as intended.
-* Fixed: connecting Cloud Optimization now always clears Used CSS, LCP data and the page cache, so a reconnect no longer serves CSS built under the old settings. Switching edge CSS/JS delivery or cloud Unused CSS in Settings now clears the page cache too.
-* Improved: with Cloud Optimization, Smart Lazyload Fonts no longer loads every font before it has measured a page. Fonts stay out of the critical CSS until the first visit measures which ones are visible, and only those are loaded from then on.
-* Improved: with Cloud Optimization, fonts referenced in the critical (Used) CSS are now served from the edge too, not only the stylesheets and scripts named in the page.
-* Fixed: switching Images off in Cloud Optimization also stopped CSS, JS and fonts from being served from the edge. They are now independent; only an inactive plan stops both.
-* Fixed: with Cloud Optimization connected, LCP preload never learned anything — every measurement of an image served from the edge was discarded, so no page got its hero preloaded. Edge-served LCP images are now recorded and matched to the page's image at any width.
-* Fixed: when only one screen size had been measured, its LCP preload was sent to every screen size, so desktop could download a mobile-only hero image it never shows. Each preload is now limited to the screen size it was measured on.
-* Improved: pages whose largest element is text or a video without a poster are now recorded as measured, so LCP detection stops re-running on every visit, and that video is never lazy-loaded.
-* Improved: connecting Cloud Optimization now also switches on LCP preload.
-* Fixed: "Hide WordPress version" removed the version from every stylesheet and script, including the ones plugins, themes and Elementor use to load a fresh copy after an update. With edge delivery that could keep serving an old file for up to a year. It now removes only the WordPress version itself.
-* Fixed: Excluded CSS Selectors did not protect Tailwind-style classes such as `md:hidden`, `w-1/2` or `2xl:p-4`, because the stylesheet writes them escaped. Exclusions now match whether you type the class as it appears in your HTML or in its escaped form.
-* Fixed: changing edge asset exclusions, <picture> image delivery, native lazy loading, preconnect, font preloading or passthrough stylesheets now clears the page cache (and, for passthrough stylesheets, rebuilds Used CSS) instead of waiting for the cache to expire.
+* Fixed: Remove Unused CSS with Tailwind classes, LCP preload with Cloud Optimization, lazy load inside noscript.
 
 = 2.7.1 =
-* Fixed: background images set in page-builder CSS files (Elementor and similar) now load through the CDN. They are already found during analysis; enabling edge CSS/JS delivery on connect is what lets them actually be served optimized, so the hero background — usually your largest image — is no longer left on your own server.
-* Fixed: the Debug Log could show a warning count in its header while the panel underneath read "No warnings or errors logged." A run of routine info lines could push the real warnings out of the view window. The count and the list are now read together, so they always agree, and older warnings are no longer hidden behind recent activity.
-* Removed: "Minify CSS" and "Minify JavaScript" no longer appear in Recommended next steps. Their impact is minimal next to Remove Unused CSS and Delay JavaScript, and they were adding noise to the list. The settings themselves are unchanged and still available under Optimization.
+* Fixed: page-builder background images through the CDN; Debug Log warning count.
 
 = 2.7.0 =
-* New: Cloud Optimization — connect an account to deliver your images, CSS, JS and fonts from 119 edge locations, with per-device image sizing. 14-day free trial, then paid; if it ever ends your site keeps working on your own server.
-* New: Local Image Optimization — convert your images to AVIF and WebP on your own server, free. The original file is never touched: variants are saved alongside it and the modern format is served automatically with a full fallback.
+* New: Cloud Optimization (images, CSS, JS and fonts from the edge) and free WebP/AVIF image optimization on your own server.
 
 = 2.6.7 =
-* Fixed: sliders could show an empty gap that only filled in once you clicked or scrolled, when Remove Unused CSS was on. Swiper adds its layout classes when its script starts, so those classes are absent from the page Remove Unused CSS reads — and their styles were being stripped while the "before the slider starts" styles survived. Swiper's state classes and sticky-header placeholders are now kept automatically. Affects Elementor sliders, WooCommerce galleries and most block themes.
-* Fixed: Excluded CSS Selectors silently missed minified rules. A selector written without spaces around `>`, `+` or `~` — which is how every minified stylesheet writes them — was not recognised, so an exclusion you added could still be stripped. Of the twelve rules carrying one Swiper class, only three were being kept. This applies to every exclusion, including ones you had already added.
-* New: Prefetch Pages now predicts where the visitor is going instead of only reacting. Once the page is idle it works out which destination your own page links to most often — the one you put in the header, the hero button and the footer — and starts that one with no interaction at all. It also watches for a "Next page" link, a dropdown or mobile menu being opened, the pointer coming to rest near a link (before it even touches it), and, on phones where there is no hover, scrolling coming to a stop with a link in the middle of the screen. Each prediction hands the browser one URL to start on immediately. Capped at four pages per visit, so it never becomes bulk downloading.
-* New: mobile finally gets a real head start. The browser's own trigger needs a hover, which a touchscreen cannot provide, so phones previously got nothing until the finger came down. Scrolling to a stop now warms the page you are reading, seconds before you tap it.
-* Changed: Prerender is now OFF by default, and is switched off on update. It builds the entire page in the background — scripts, images and all — and testing showed it never finishing in the fraction of a second between the mouse button going down and the page opening; the ordinary prefetch served every navigation instead. It is still one click away for sites that want it.
-* New: Prefetch Pages has been rebuilt from scratch. It no longer ships any link-scanning JavaScript. Instead it writes one small set of browser speculation rules into the top of every page, so the browser starts loading the next page as soon as the visitor hovers a link — and starts a full prerender the moment the mouse button goes down. The rules are in place before the page has finished loading, instead of after a script downloads in the footer and waits for an idle moment.
-* Fixed: Easy Optimizer and WordPress were both prefetching. WordPress 6.8+ adds its own speculative loading, and the old module never switched it off — every page carried two competing systems. Prefetch Pages now takes ownership while it is on, and hands WordPress back its own behaviour the moment you turn it off.
-* Fixed: the per-second throttle could delay the very first prefetch by up to a full second — on a feature whose entire job is to start sooner. There is no queue any more; the browser schedules the work and enforces its own limits.
-* Improved: links in your footer are treated as lower intent than links in your content and navigation, so a hover over a privacy-policy link no longer costs the same as a hover over the next article.
-* Improved: `*` wildcards now work in Prefetch Pages → Exclude URLs, the same as in every other Excluded URLs field. Lines naming a query parameter (`ref=`) are matched against the query string rather than the path.
-* Improved: query-string URLs, `/wp-json/`, feeds, downloads and WooCommerce cart/checkout/account pages are excluded before the browser ever sees them, and exclusions added by other plugins through WordPress's own `wp_speculation_rules_href_exclude_paths` filter are honoured too.
-* Changed: the "Max prefetch requests/second" and "Per-page limit" settings are gone — they configured the old request queue, which no longer exists. Chromium enforces its own caps (50 prefetches, 2 prerenders in flight). Both stored values are removed automatically on update.
-* Changed: the "Immediate" eagerness option is gone. On a whole-document rule it means "fetch every link on this page right now", which WordPress Core forbids for the same reason. Existing sites set to Immediate move to Eager.
-* Removed: the bundled quicklink-derived runtime (`assets/easyoptlink.js`) and its licence notice. No code derived from it remains.
+* New: Prefetch Pages rebuilt on browser speculation rules, with a head start on phones. Fixed: slider gaps with Remove Unused CSS.
 
 = 2.6.6 =
-* Fixed: "Cache for logged-in users" now actually serves cached pages to logged-in visitors. The page was being generated and rewritten on every visit but never served (headers stayed on MISS), because the serving drop-in treated the login cookie as a reason to skip the cache even when this option was on.
-* Changed: Instant Load prerenders far fewer pages per view by default (8 instead of 50) and no longer prerenders filtered/sorted URLs that can never be cached — big reduction in background server load on shops and archives. If you set your own limit, it is kept.
-* Fixed: Remove Unused CSS no longer re-attempts a build it just failed on every single request (e.g. when stylesheets live on a CDN it can't read) — a failed build is remembered briefly, so the page serves normally without repeating the expensive work. Clears automatically and on "Clear Used CSS".
+* Fixed: Cache for Logged-in Users now serves cached pages; fewer background prerenders.
 
 = 2.6.5 =
-* New: takes over page caching from another cache plugin (like WP Rocket and LiteSpeed do) — but backs up the other plugin's cache file first and restores it if you turn our cache off or uninstall.
-* New: setup wizard can deactivate a conflicting plugin for you so Easy Optimizer can handle its jobs.
-* Fixed: Excluded URLs now work with the Defer JavaScript method — before, switching to Defer silently ignored them (reported on Tutor LMS).
-* Fixed: wildcards like /shop/* now work in every Excluded URLs field, not just JavaScript.
-* Fixed: conflict warnings no longer flag plugins that are installed but switched off — each plugin's own settings are read now (WP Rocket, LiteSpeed, Autoptimize, Perfmatters, Jetpack Boost, SiteGround, WP-Optimize, Breeze, Hummingbird, WP Fastest Cache, Asset CleanUp, W3 Total Cache, Optimole, Smush).
-* Fixed: combine, critical CSS, async, defer and lazy-load clashes are detected too, not just plain minify.
-* Fixed: SiteGround sites are no longer told to deactivate SiteGround Optimizer — Easy Optimizer purges through it.
-* Fixed: Windows-hosting bug that could switch off another cache plugin.
-* Fixed: setup no longer turns Lazy Load on next to a plugin already lazy-loading.
-* Changed: simpler sidebar — seven groups become four, Advanced starts collapsed (eight items instead of thirteen). Nothing removed or renamed.
-* Changed: distinct sidebar icons; new Compatibility panel on the Dashboard.
-* Changed: plugin-conflict detection is cached instead of running on every admin page.
+* New: safely takes over page caching from another cache plugin. Fixed: Excluded URLs with Defer, wildcards in every exclusion field.
 
 = 2.6.4 =
-* Changed: Remove Unused CSS uses a new built-in CSS parser — about 2.4 MB smaller, ~5× faster and far less memory. Builder CSS (Elementor/Divi) passed through is now minified too.
-* Fixed: a single malformed stylesheet (e.g. an unclosed @media in a builder's Custom CSS) can no longer break your layout — generated CSS is always balanced.
-* Fixed: modern CSS nesting is kept instead of dropped; mis-encoded stylesheets handled more robustly.
+* Changed: a smaller, faster CSS parser for Remove Unused CSS.
 
 = 2.6.3 =
-* Fixed: Remove Unused CSS now keeps @layer, @scope, @container, @starting-style and modern colour syntax that were being dropped.
-* Fixed: the automatic before/after speed test never ran — the "After" score only appeared if you pressed Run yourself. It runs now, and retries up to 3 times on failure.
-* Fixed: WordPress 7.1 — "Clear All Cache" no longer shows in the Post/Site editor toolbar.
-* New: Smart Images warnings show time left ("about 6 days left"), not just amount.
-* New: an optional review prompt, shown only after a real speed gain (10+ mobile points); dismissible for 90 days.
-* Changed: free Smart Images plan raised to 500 images/month (was 50); tested with WordPress 7.1.
+* Fixed: Remove Unused CSS keeps modern CSS (@layer, @container and more); the before/after speed test runs by itself.
 
 = 2.6.2 =
-* Fixed: fatal error on Flywheel, WP Engine and other hardened hosts (disabled PHP functions on PHP 8) that could take a site down, including wp-admin — every such call is checked first now.
-* Fixed: cache purging no longer stops when page caching is off — your host cache and Cloudflare are purged on content changes again.
-* Fixed: Flywheel cache clearing works now (clears object cache) and tells you what it can't do; wp-config.php found on split-directory hosts.
-* Changed: optimization is off for logged-in users unless "Cache for Logged-in Users" is on (Delay/Defer JS, Minify, Lazy load, Fonts, Preconnect). Logged-out visitors unaffected. Filter: easyopt_skip_for_logged_in.
+* Fixed: fatal error on hardened hosts (Flywheel, WP Engine); host and Cloudflare purging with page cache off.
 
 = 2.6.1 =
-* New: Cache Query String — give chosen parameters their own cache file, for sites that render the value into the page. Per-click IDs (gclid, fbclid…) are refused.
-* Fixed: the strip-query-params filter now applies to the cache drop-in too, so ignoring or adding a parameter actually works.
-* Fixed: installing Polylang/WPML on a cached site no longer serves one language to everyone.
-* Fixed: Nginx/Apache edge cases (mobile rule, non-standard ports); cache directories no longer created from an unknown Host header.
-* Security: CDN credentials moved out of the main settings row — no longer in the admin payload or exports; image URLs with \ or @ in the host are no longer signed.
+* New: Cache Query String. Fixed: multilingual sites, Nginx and Apache edge cases.
 
 = 2.6.0 =
-* New: Debug Issues panel — find which optimization breaks a page in a couple of clicks.
-* New: "What to fix next" dashboard card — your PageSpeed findings as a ranked to-do list.
-* New: setup wizard checks your site and skips anything another plugin or host already handles.
-* New: GoDaddy Managed WordPress Varnish/CDN purging.
-* Security: preload requests are signed now (were unauthenticated); beacon token tied to its page; no longer overwrites another active cache plugin's drop-in; cached pages declare what they vary on; exports no longer contain Cloudflare/Redis/CDN secrets.
-* Fixed: page cache now works on Pantheon and read-only hosts; cache paths built by one shared routine (ends permanent misses); "Pages cached" counts accurately.
-* Fixed: Remove Unused CSS no longer crashes on memory-limited hosts; Delay JS no longer breaks <script type="module">; Safe Mode can switch minify off.
-* Improved: conflict notices name the other plugin and link to Plugins; detection extended to 20+ more plugins and to fonts (OMGF, Perfmatters); disabled modules no longer load on the front end.
-* Developers: new EasyOpt_Preflight::scan(), wizard/preflight REST route, and many new filters.
+* New: Debug Issues panel, "What to fix next" card, a setup wizard that checks your site first.
 
 = 2.5.6 =
-* Fixed: Smart Lazyload/Preload Fonts had no effect on mobile (wrong data name); desktop was fine.
-* Fixed: robots.txt/llms.txt no longer cached for 30 days (now 5 minutes); preconnect no longer opens connections to metadata-only domains.
-* Changed: preconnect no longer emits a duplicate dns-prefetch tag.
+* Fixed: font preloading on mobile; robots.txt cached too long.
 
 = 2.5.5 =
-* Fixed: OpenLiteSpeed pages could download instead of display — now served in a universal format.
-* Fixed: preload no longer false-stalls on shared hosting; firewall-blocked requests retry with backoff.
-* Fixed: multilingual (Polylang/WPML) no longer serves the wrong language; <picture> images no longer stay blank with sliders/AJAX.
-* New: browser-native lazy load (on by default); preconnect to external origins; optional Nginx rules.
-* Improved: WooCommerce shoppers keep getting cached pages after add-to-cart; many more ad/email tracking parameters no longer bust the cache.
-* Diagnostics (opt-in): sends less data; optional one-click deactivation feedback; Smart Images health reporting.
+* New: browser-native lazy load, preconnect, optional Nginx rules. Fixed: OpenLiteSpeed pages downloading instead of displaying.
 
 = 2.5.4 =
-* Performance release — no feature or settings changes. Faster cache purges (deduplicated, run after the response), faster minify and Used CSS, lighter preload and object cache, and many micro-optimizations across the plugin.
+* Performance release: faster purges, minify, Used CSS and preload.
 
 = 2.5.3 =
-* New: Smart Images (FluxPress CDN) — on-the-fly AVIF/WebP, per-device resizing and compression from a global edge; originals never uploaded or modified. Smart quality per browser/format.
-* New: cache for logged-in users (per role; per-user via filter).
-* New: Cron Events tool in your site's timezone with overdue markers and Run-now.
-* Fixed: Object Cache drop-in install on PHP-FPM hosts (atomic, in-process syntax check); xCloud Redis ACL format supported.
-* Improved: real "Don't show again" on notices; clearer Smart Images connection status.
+* New: Smart Images, cache for logged-in users, Cron Events tool.
 
 = 2.5.2 =
-* Fixed: Remove Unused CSS — missing styles across template variants of the same post type; shared CSS now updates as new layouts appear.
-* Fixed: LCP — correctly de-lazifies the detected image with lazysizes-style lazy loading.
-* Fixed: blank pages on very large pages (PCRE handling, incomplete-output safeguards).
-* Fixed: Lazy Load — fewer resize events, less flicker.
-* Changed: lazy iframes without dimensions reserve a 16:9 placeholder.
+* Fixed: Remove Unused CSS across template variants; blank very large pages.
 
 = 2.5.1 =
-* New: Object Cache — Redis 6+ ACL username, host-provisioned WP_REDIS_CONFIG, TLS (rediss://) and unix sockets; shows which values come from wp-config.php.
-* Fixed: Remove Unused CSS — Elementor entrance/hover animations (zoomInUp etc.) no longer break; helper classes safelisted.
-* Improved: precise Redis connection diagnostics; Test Connection works with bundled Predis; changing DB/prefix flushes the old location.
+* New: Redis ACL, TLS and socket support. Fixed: Elementor animations with Remove Unused CSS.
 
 = 2.5.0 =
-* New: Object Cache module — one-click Redis (Relay/PhpRedis/Predis) for database-heavy, logged-in and WooCommerce pages; never touches another plugin's drop-in.
-* New: adaptive preload speed (Gentle/Balanced/Turbo) that tunes to your server; Preload Fonts per device; Remove Unused CSS keeps JS-added classes.
-* Improved: per-URL LCP preload covering background, <picture> and image-set heroes; responsive srcset via the image CDN; link prefetch rate cap and back-off.
-* Fixed: preloading now works on server-cache hosts (WPX, Varnish/LiteSpeed/nginx); redirected URLs never cached under the original address.
-* Fixed: URLs merely containing "sitemap/cart/checkout/my-account" are no longer wrongly excluded.
+* New: Redis Object Cache, adaptive preload speed, per-page LCP preload.
 
 = 2.4.2 =
-* Fixed: PHP open_basedir warnings on restricted hosts (CloudLinux, GridPane, RunCloud, Cloudways).
-* Improved: conflict notices are feature-aware — only warn when the overlapping feature is actually on.
-* Fixed: Perfmatters not detected for overlap notices (wrong path).
+* Fixed: open_basedir warnings on restricted hosts.
 
 = 2.4.1 =
-* New: Backend Analyzer measures each plugin/theme's own code (per-callback) and groups by plugin; WordPress core time shown separately.
-* Improved: each test shows the average and replaces the previous result; browser fallback when the host blocks the server request.
-* New: developer purge hooks — easyopt_purge_all, easyopt_purge_url, easyopt_purge_url_type.
-* Added: donation link.
+* New: per-plugin timings in Backend Analyzer; developer purge hooks.
 
 = 2.4.0 =
-* New: dashboard speed test (PageSpeed before/after, mobile and desktop, Core Web Vitals).
-* New: Backend Analyzer — find slow plugins, themes and queries.
-* Fixed: admin toolbar menu restored; blank admin panel when another plugin loads React; autoload toggle on WP 6.6+.
-* Fixed: cache correctness — cookie-keyed variants in .htaccess mode, debounced builder purges, settings-import pipeline, .xml/.txt slugs, HEAD requests, cached-page counter.
-* New: per-site multisite drop-in config; unused-asset garbage collection; batched Cloudflare per-URL purges.
-* Improved: cache engine split into modules with a classmap autoloader.
+* New: dashboard speed test and Backend Analyzer.
 
 = 2.3.2 =
-* Fixed: Astra .ast-header-break-point styles excluded from desktop Used CSS.
-* Improved: targeted cache invalidation — editing a post clears only its URLs; comments/terms/authors clear just the affected page; multisite clears only the current site.
-* Improved: WooCommerce cart/checkout/account reliably uncached (including translated slugs); per-currency cache copies.
-* Improved: simplified admin-bar menu to three actions; minified prefetch/LCP scripts.
+* Improved: editing a post clears only its pages; WooCommerce cart and checkout never cached.
 
 = 2.3.0 =
-* New: first-run setup wizard with three presets (Safe / Balanced / Maximum); nothing enabled until you choose. Existing sites keep their settings.
-* New: Minify CSS and JavaScript (local files, cached on disk, processed once).
-* New: Safe Mode button — one-click revert to the conservative preset for troubleshooting.
-* New: query-string debug switches (?nooptimize, ?nocache, ?nodelayjs, ?norucss).
-* Fixed: Remove Unused CSS fail-safe — original styles kept until a valid Used CSS passes a confidence check.
+* New: setup wizard with presets, Minify CSS and JavaScript, Safe Mode.
 
 = 2.2.2 =
-* Fixed: cached page count no longer drops to near-zero in a clear→re-preload loop (recording LCP refreshes only that page).
-* Improved: cache files written atomically; better Vary handling.
-* Added: Debug Log records excessive purges, stalled preload and cache-write failures; log moved out of the cache directory.
+* Fixed: cached page count; cache files written safely.
 
 = 2.2.1 =
-* Fixed: HTTP 500 on some Apache/LiteSpeed servers after writing .htaccess (removed obsolete BrowserMatch gzip directives; correct mod_filter wrapper).
-* New: per-server safety probe — risky .htaccess rules are tested in a throwaway directory first so they can never 500 the site.
-* New: OpenLiteSpeed detected, gzip block skipped (it compresses natively).
+* Fixed: HTTP 500 on some servers after writing .htaccess.
 
 = 2.2.0 =
-* New: auto-detect and purge server-level caches across major hosts (Cloudways, Kinsta, WP Engine, SiteGround, Pantheon, Flywheel, Pressable and more); dashboard card showing detected layers.
-* New: direct Varnish PURGE fallback for Cloudways without Breeze.
-* Improved: server purge rate-limited and non-blocking; full purge only on explicit clear.
+* New: automatic purging of host caches (Cloudways, Kinsta, WP Engine, SiteGround and more).
 
 = 2.1.0 =
-* New: Optimization tab split into JavaScript, CSS, Lazy Load, Preload LCP and Prefetch Pages; Database split into Cleanup and Autoload Health; new Heartbeat & Cron and Settings (Import/Export) tabs.
-* New: Disable Block Library CSS; Rewrite Elementor Background Images; Stylesheet "Remove" option.
-* Improved: "Instant Load" renamed "Prefetch Pages"; preload on by default with auto-restart.
+* New: separate settings tabs, Heartbeat & Cron, settings import and export.
 
 = 2.0.3 =
-* New: Heartbeat control, WP-Cron throttle, Cron Event Manager, Defer JavaScript method, separate mobile/desktop Used CSS, Autoload Health.
-* Fixed: Cloudflare test connection no longer needs a pre-save.
+* New: Heartbeat control, Cron manager, Defer JavaScript, Autoload Health.
 
 = 2.0.2 =
 * Improved: database snapshot restore.
 
 = 2.0.1 =
-* Improved: conditional module loading.
+* Improved: modules load only when switched on.
 
 = 2.0.0 =
-* Major rewrite — 25+ features: page cache, cache preload, remove unused CSS, delay JavaScript, LCP preload, prefetch, font optimization, database cleanup with snapshots, Cloudflare, 9 hosting integrations, accessibility and bloat toggles, and a new dashboard.
+* Rewrite: page cache, Remove Unused CSS, Delay JavaScript, LCP preload and 20+ more features.
 
 = 1.1 =
-* Initial release — lazy load and Image CDN.
+* Initial release: lazy load and image CDN.
+
+Full release notes for 2.7.5 and older are in the [2.7.5 readme](https://plugins.svn.wordpress.org/easy-optimizer/tags/2.7.5/readme.txt).
 
 == Upgrade Notice ==
+
+= 2.8.0 =
+A shorter admin layout with each section's pages as tabs. Delay and Defer JavaScript can run together with separate exclusion lists (your settings carry over), plus one-click exclusions, a URL Inspector, YouTube preview images, CSS background lazy loading, your own CDN with a safety net, and WP-CLI commands. Credentials are no longer autoloaded or sent to the browser.
 
 = 2.7.5 =
 Independent Analytics counts visitors again with "Limit REST API to Logged-in Users" or Delay JavaScript turned on.

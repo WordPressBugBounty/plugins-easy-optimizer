@@ -49,6 +49,7 @@ class EasyOpt_Settings_Registry {
         $s['easyopt_cache_ttl']                = array( 'default' => 0 ) + $int_bool;
         $s['easyopt_cache_separate_mobile']    = array( 'default' => 1 ) + $int_bool;
         $s['easyopt_cache_logged_in']          = array( 'default' => 0 ) + $int_bool;
+        $s['easyopt_cache_logged_in_per_user'] = array( 'default' => 0 ) + $int_bool; // (2.8.0) one copy per user, not per role
         $s['easyopt_cache_preload']            = array( 'default' => 1 ) + $int_bool;
         $s['easyopt_cache_preload_speed']      = array( 'default' => 'gentle', 'sanitize' => array( __CLASS__, 'sanitize_preload_speed' ), 'type' => 'enum' );
         $s['easyopt_cache_browser_caching']    = array( 'default' => 1 ) + $int_bool;
@@ -126,6 +127,13 @@ class EasyOpt_Settings_Registry {
         $s['easyopt_cloud_unused_css']     = array( 'default' => 0 ) + $int_bool;
         $s['easyopt_cloud_assets_exclude'] = array( 'default' => '' ) + $str_area;
 
+        // ── Your own CDN (2.8.0) ──────────────────────────────
+        // A CNAME / pull zone the site owner runs. Used only while FluxPress
+        // delivery is off.
+        $s['easyopt_cdn_custom']           = array( 'default' => 0 ) + $int_bool;
+        $s['easyopt_cdn_custom_url']       = array( 'default' => '', 'sanitize' => array( __CLASS__, 'sanitize_cdn_custom_url' ), 'type' => 'string' );
+        $s['easyopt_cdn_custom_exclude']   = array( 'default' => '' ) + $str_area;
+
         // ── Local image optimization ──────────────────────────
         // Off by default: it writes files into uploads/, which is not a
         // thing to start doing to someone's site without them asking.
@@ -164,6 +172,20 @@ class EasyOpt_Settings_Registry {
         $s['easyopt_delay_js_exclude_urls']   = array( 'default' => '' ) + $str_area;
         $s['easyopt_delay_js_exclude_jquery'] = array( 'default' => 1 ) + $int_bool;
         $s['easyopt_delay_js_include_inline'] = array( 'default' => '' ) + $str_area;
+        // (2.8.0) Ticked one-click exclusion ids, one per line. Empty by
+        // default and never filled in for anyone: see EasyOpt_Delay_Oneclick.
+        $s['easyopt_delay_js_oneclick']       = array( 'default' => '' ) + $str_area;
+        // (2.8.0) Hold back only other hosts' scripts: see EasyOpt_Delay_JS::is_own_script().
+        $s['easyopt_delay_js_external_only']  = array( 'default' => 0 ) + $int_bool;
+
+        // ── Defer JS (2.8.0) ─────────────────────────────────────────────
+        // Its own engine with its own toggle and exclusion list, so it can run
+        // alongside Delay JS: Defer runs first, and Delay keeps the defer
+        // order of the scripts it holds back. Before 2.8.0 Defer was delay_js_method = 'defer' and shared
+        // Delay's list; EasyOpt_Config translates that shape wherever it
+        // arrives. Exclude URLs and Exclude jQuery stay shared.
+        $s['easyopt_defer_js']                = array( 'default' => 0 ) + $int_bool;
+        $s['easyopt_defer_js_exclude']        = array( 'default' => '' ) + $str_area;
 
         // ── Minify (2.3.0) ───────────────────────────────────────────────
         // Independent of Delay JS / Unused CSS. Each minifies LOCAL files only
@@ -190,6 +212,8 @@ class EasyOpt_Settings_Registry {
         $s['easyopt_lazy_images']            = array( 'default' => 0 ) + $int_bool;
         $s['easyopt_lazy_iframes']           = array( 'default' => 0 ) + $int_bool;
         $s['easyopt_lazy_videos']            = array( 'default' => 0 ) + $int_bool;
+        $s['easyopt_lazy_youtube']           = array( 'default' => 0 ) + $int_bool; // (2.8.0) thumbnail until clicked
+        $s['easyopt_lazy_css_bg']            = array( 'default' => 0 ) + $int_bool; // (2.8.0) backgrounds in <style>
         $s['easyopt_add_missing_dims']       = array( 'default' => 0 ) + $int_bool;
         $s['easyopt_dims_exclude']           = array( 'default' => '' ) + $str_area;
         $s['easyopt_lazyload_exclude']       = array( 'default' => '' ) + $str_area;
@@ -381,6 +405,30 @@ class EasyOpt_Settings_Registry {
     public static function sanitize_fluxcdn_max_width( $v ) {
         $v = absint( $v );
         return 0 === $v ? 0 : max( 320, min( 4096, $v ) );
+    }
+
+    /**
+     * (2.8.0) Own CDN base: an http(s) URL on another host, no trailing slash,
+     * or empty. Pointing it at the site itself would rewrite every URL to
+     * itself, so that is refused.
+     */
+    public static function sanitize_cdn_custom_url( $v ) {
+        $v = is_string( $v ) ? trim( $v ) : '';
+        if ( '' === $v ) {
+            return '';
+        }
+        if ( ! preg_match( '#^https?://#i', $v ) ) {
+            $v = 'https://' . ltrim( $v, '/' );
+        }
+        $v    = esc_url_raw( $v, array( 'http', 'https' ) );
+        $host = is_string( $v ) ? strtolower( (string) wp_parse_url( $v, PHP_URL_HOST ) ) : '';
+        $home = strtolower( (string) wp_parse_url( home_url(), PHP_URL_HOST ) );
+        if ( '' === $host || preg_replace( '/^www\./', '', $host ) === preg_replace( '/^www\./', '', $home ) ) {
+            return '';
+        }
+        $path = (string) wp_parse_url( $v, PHP_URL_PATH );
+        return untrailingslashit( strtolower( (string) wp_parse_url( $v, PHP_URL_SCHEME ) ) . '://' . $host
+            . ( wp_parse_url( $v, PHP_URL_PORT ) ? ':' . (int) wp_parse_url( $v, PHP_URL_PORT ) : '' ) . $path );
     }
 
     /** FluxCDN endpoint: https URL or empty (empty = built-in default). */

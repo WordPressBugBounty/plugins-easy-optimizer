@@ -52,7 +52,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 class EasyOpt_Preload_Results {
 
     /** Bump when columns or indexes change. */
-    const SCHEMA_VERSION = 1;
+    const SCHEMA_VERSION = 2; // 2 (2.8.0): retries
 
     const OPTION_SCHEMA = 'easyopt_preload_results_schema';
     const OPTION_RUN_ID = 'easyopt_preload_run_id';
@@ -72,6 +72,13 @@ class EasyOpt_Preload_Results {
      *  WP Rocket's 12-hour revert loop so no URL is stranded forever. */
     const REVERT_AFTER_SECONDS = 43200; // 12 h
     const REVERT_CAP           = 200;
+
+    /** (2.8.0) Revert passes per URL per run. After these it stays failed until
+     *  the next full run, instead of re-rendering every pass forever. */
+    const REVERT_MAX_RETRIES = 3;
+
+    /** (2.8.0) Most one blocking re-check of a lost warm per this many seconds. */
+    const RECHECK_EVERY_SECONDS = 600;
 
     /** GC: resolved rows from PREVIOUS runs older than this are purged. */
     const GC_RESOLVED_TTL = 2592000; // 30 days
@@ -123,6 +130,7 @@ class EasyOpt_Preload_Results {
             devices_done TINYINT UNSIGNED NOT NULL DEFAULT 0,
             http_code SMALLINT UNSIGNED NOT NULL DEFAULT 0,
             note VARCHAR(500) NOT NULL DEFAULT '',
+            retries TINYINT UNSIGNED NOT NULL DEFAULT 0,
             created_at DATETIME NOT NULL,
             updated_at DATETIME NOT NULL,
             PRIMARY KEY  (id),
@@ -267,6 +275,7 @@ class EasyOpt_Preload_Results {
                devices_done = 0,
                http_code    = 0,
                note         = '',
+               retries      = 0,
                updated_at   = UTC_TIMESTAMP()"
         );
     }
@@ -299,6 +308,7 @@ class EasyOpt_Preload_Results {
              ON DUPLICATE KEY UPDATE
                devices_done = IF( run_id <> VALUES(run_id) AND status = 'cached', 0, devices_done ),
                status       = IF( run_id <> VALUES(run_id) AND status = 'cached', 'pending', status ),
+               retries      = IF( run_id <> VALUES(run_id), 0, retries ),
                run_id       = VALUES(run_id),
                updated_at   = UTC_TIMESTAMP()",
             $hash,
@@ -437,6 +447,25 @@ class EasyOpt_Preload_Results {
      * ─────────────────────────────────────────────── */
 
     /**
+     * (2.8.0) The ledger row for one URL (URL Inspector), or null.
+     *
+     * @param string $url Absolute URL.
+     * @return array{status:string,devices_done:int,http_code:int,note:string,updated_at:string}|null
+     */
+    public static function row_for_url( $url ) {
+        $hash = self::hash_url( $url );
+        if ( '' === $hash || ! self::available() ) {
+            return null;
+        }
+        global $wpdb;
+        $row = $wpdb->get_row( $wpdb->prepare(
+            'SELECT status, devices_done, http_code, note, updated_at FROM ' . self::table_name() . ' WHERE url_hash = %s',
+            $hash
+        ), ARRAY_A );
+        return is_array( $row ) ? $row : null;
+    }
+
+    /**
      * Per-status counts for the current run. Returns zeros when no run has
      * been recorded (fresh install / pre-first-preload).
      *
@@ -484,8 +513,12 @@ class EasyOpt_Preload_Results {
      *   - neither → 'failed' with a diagnostic note. The fire-and-forget
      *     path is thereby fully observable: a dispatched render that never
      *     produced a file surfaces here instead of vanishing.
+     *
+     * @param int  $limit   Rows per pass.
+     * @param bool $recheck (2.8.0) Allow the blocking re-check of one lost page
+     *                      (report_lost()). False on paths a person is waiting on.
      */
-    public static function reconcile( $limit = self::RECONCILE_CAP ) {
+    public static function reconcile( $limit = self::RECONCILE_CAP, $recheck = true ) {
         if ( ! self::available() || ! self::preload_enabled() ) {
             return 0;
         }
@@ -522,11 +555,18 @@ class EasyOpt_Preload_Results {
 
         $separate = ( self::required_bits() & self::DEV_MOBILE ) === self::DEV_MOBILE;
         $touched  = array();
+        $gone     = array();
+        $lost     = array();
         $handled  = 0;
 
         foreach ( $rows as $row ) {
             if ( isset( $live[ $row['url_hash'] ] ) ) {
                 $touched[] = (int) $row['id']; // still queued — advance the window.
+                continue;
+            }
+            if ( ! self::may_warm( (string) $row['url'] ) ) {
+                $gone[] = (int) $row['id'];
+                $handled++;
                 continue;
             }
             $paths = ( class_exists( 'EasyOpt_Cache' ) && method_exists( 'EasyOpt_Cache', 'cache_paths_for_url' ) )
@@ -556,13 +596,7 @@ class EasyOpt_Preload_Results {
                 'warm produced no cache file (' . implode( '+', $missing ) . ')',
                 0
             );
-            if ( class_exists( 'EasyOpt_Debug_Log' ) ) {
-                EasyOpt_Debug_Log::warn( 'preload', sprintf(
-                    'No cache file after warm: %s (missing %s) — will retry via revert pass.',
-                    (string) $row['url'],
-                    implode( '+', $missing )
-                ) );
-            }
+            $lost[] = array( 'url' => (string) $row['url'], 'missing' => $missing );
             $handled++;
         }
 
@@ -574,7 +608,69 @@ class EasyOpt_Preload_Results {
                 $touched
             ) );
         }
+        self::forget( $gone );
+        self::report_lost( $lost, $recheck );
         return $handled;
+    }
+
+    /**
+     * (2.8.0) One log line per pass, however many pages it failed. A site where
+     * warms fail wholesale otherwise logs a line per page, every pass. The first
+     * page gets a blocking re-check, so the line can say what the server answered.
+     *
+     * @param array[] $lost    Each with url and missing (device names).
+     * @param bool    $recheck Whether the blocking re-check may run.
+     */
+    private static function report_lost( array $lost, $recheck = true ) {
+        if ( empty( $lost ) ) {
+            return;
+        }
+        $url     = $lost[0]['url'];
+        $missing = $lost[0]['missing'];
+        $why     = '';
+        if ( $recheck && class_exists( 'EasyOpt_Cache_Preload' ) && false === get_transient( 'easyopt_preload_recheck_gate' ) ) {
+            set_transient( 'easyopt_preload_recheck_gate', 1, self::RECHECK_EVERY_SECONDS );
+            $why = EasyOpt_Cache_Preload::recheck_missing_file( $url, $missing[0] );
+            $row = self::row_for_url( $url );
+            if ( is_array( $row ) && 'failed' === $row['status'] ) {
+                self::mark_failed( $url, $row['note'] . '; re-check: ' . $why, 0 );
+            }
+        }
+        if ( class_exists( 'EasyOpt_Debug_Log' ) ) {
+            EasyOpt_Debug_Log::warn( 'preload', sprintf(
+                'No cache file after warm for %d page(s), first: %s (missing %s) — retried up to %d times.%s',
+                count( $lost ),
+                $url,
+                implode( '+', $missing ),
+                self::max_retries(),
+                '' !== $why ? ' Re-check of that page: ' . $why . '.' : ''
+            ) );
+        }
+    }
+
+    private static function max_retries() {
+        return max( 0, (int) apply_filters( 'easyopt_preload_revert_max_retries', self::REVERT_MAX_RETRIES ) );
+    }
+
+    /** False for a page that became visit-only after it joined the ledger. */
+    private static function may_warm( $url ) {
+        return ! class_exists( 'EasyOpt_Cache_Preload' ) || EasyOpt_Cache_Preload::may_warm_url( $url );
+    }
+
+    /**
+     * Drop rows that are no longer part of the warm.
+     *
+     * @param int[] $ids
+     */
+    private static function forget( array $ids ) {
+        if ( empty( $ids ) ) {
+            return;
+        }
+        global $wpdb;
+        $table        = self::table_name();
+        $placeholders = implode( ',', array_fill( 0, count( $ids ), '%d' ) );
+        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+        $wpdb->query( $wpdb->prepare( "DELETE FROM $table WHERE id IN ($placeholders)", $ids ) );
     }
 
     private static function variant_on_disk( $gz_path ) {
@@ -607,11 +703,12 @@ class EasyOpt_Preload_Results {
         $table = self::table_name();
         $rows  = $wpdb->get_results( $wpdb->prepare(
             "SELECT id, url FROM $table
-             WHERE run_id = %d AND status = 'failed'
+             WHERE run_id = %d AND status = 'failed' AND retries < %d
                AND updated_at < DATE_SUB( UTC_TIMESTAMP(), INTERVAL %d SECOND )
              ORDER BY updated_at ASC
              LIMIT %d",
             $run,
+            self::max_retries(),
             (int) apply_filters( 'easyopt_preload_revert_after', self::REVERT_AFTER_SECONDS ),
             (int) apply_filters( 'easyopt_preload_revert_cap', self::REVERT_CAP )
         ), ARRAY_A );
@@ -619,19 +716,25 @@ class EasyOpt_Preload_Results {
             return 0;
         }
 
-        $ids = array();
+        $ids  = array();
+        $gone = array();
         if ( class_exists( 'EasyOpt_Cache_Preload' ) && method_exists( 'EasyOpt_Cache_Preload', 'requeue_url' ) ) {
             foreach ( $rows as $row ) {
+                if ( ! self::may_warm( (string) $row['url'] ) ) {
+                    $gone[] = (int) $row['id'];
+                    continue;
+                }
                 EasyOpt_Cache_Preload::requeue_url( (string) $row['url'] );
                 $ids[] = (int) $row['id'];
             }
         }
+        self::forget( $gone );
         if ( ! empty( $ids ) ) {
             $placeholders = implode( ',', array_fill( 0, count( $ids ), '%d' ) );
             // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
             $wpdb->query( $wpdb->prepare(
                 "UPDATE $table
-                 SET status = 'pending', note = 'reverted for retry', updated_at = UTC_TIMESTAMP()
+                 SET status = 'pending', note = 'reverted for retry', retries = retries + 1, updated_at = UTC_TIMESTAMP()
                  WHERE id IN ($placeholders)",
                 $ids
             ) );
@@ -671,6 +774,14 @@ class EasyOpt_Preload_Results {
              LIMIT 5000",
             $run,
             self::GC_RESOLVED_TTL
+        ) );
+
+        // (2.8.0) A previous run's row still 'pending' never got a result and
+        // never will: reconcile() only reads the current run, and a URL that
+        // joins a later run gets that run's id. It only looked stuck.
+        $wpdb->query( $wpdb->prepare(
+            "DELETE FROM $table WHERE run_id < %d AND status = 'pending' LIMIT 5000",
+            $run
         ) );
 
         $total = (int) $wpdb->get_var( "SELECT COUNT(*) FROM $table" ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared

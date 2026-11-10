@@ -21,6 +21,10 @@ class EasyOpt_Save_Coordinator {
         'easyopt_cache_mode',
         'easyopt_cache_browser_caching',
         'easyopt_cache_gzip',
+        // (2.8.0) The static-serve cookie guard is built from this list.
+        'easyopt_cache_exclude_cookies',
+        // (2.8.0) The device rules are only written when mobile is separate.
+        'easyopt_cache_separate_mobile',
     );
 
     /**
@@ -38,6 +42,8 @@ class EasyOpt_Save_Coordinator {
         'easyopt_cache_separate_mobile',
         'easyopt_cache_logged_in',
         'easyopt_cache_exclude_urls',
+        // (2.8.0) Role-keyed and user-keyed files have different names.
+        'easyopt_cache_logged_in_per_user',
         'easyopt_cache_exclude_cookies',
         'easyopt_cache_strip_query_params',
         // (2.6.1) Changing which parameters key their own cache file changes
@@ -51,6 +57,10 @@ class EasyOpt_Save_Coordinator {
         'easyopt_delay_js_exclude_urls',
         'easyopt_delay_js_exclude_jquery',
         'easyopt_delay_js_include_inline',
+        'easyopt_delay_js_oneclick',
+        'easyopt_delay_js_external_only',
+        'easyopt_defer_js',
+        'easyopt_defer_js_exclude',
         'easyopt_minify_css',
         'easyopt_minify_js',
         'easyopt_unused_css',
@@ -65,6 +75,8 @@ class EasyOpt_Save_Coordinator {
         'easyopt_lazy_images',
         'easyopt_lazy_iframes',
         'easyopt_lazy_videos',
+        'easyopt_lazy_youtube',            // (2.8.0)
+        'easyopt_lazy_css_bg',             // (2.8.0)
         'easyopt_add_missing_dims',
         'easyopt_dims_exclude',
         'easyopt_lazyload_exclude',
@@ -82,6 +94,9 @@ class EasyOpt_Save_Coordinator {
         'easyopt_cloud_assets',
         'easyopt_cloud_unused_css',
         'easyopt_cloud_assets_exclude',    // (2.7.2)
+        'easyopt_cdn_custom',              // (2.8.0) own CDN
+        'easyopt_cdn_custom_url',
+        'easyopt_cdn_custom_exclude',
         'easyopt_images_picture',          // (2.7.2) <picture> AVIF/WebP markup
         'easyopt_preconnect',              // (2.7.2) resource hints
         'easyopt_image_exclude',
@@ -332,6 +347,34 @@ class EasyOpt_Save_Coordinator {
         }
 
         self::ensure_shutdown_registered();
+    }
+
+    /**
+     * (2.8.0) What saving a change to this setting sets off, in words — for
+     * the read-only diagnostics (EasyOpt_Abilities).
+     *
+     * @return string[]
+     */
+    public static function effects( $key ) {
+        $out = array();
+        if ( in_array( $key, self::$html_affecting, true ) ) {
+            $out[] = 'Empties the page cache (and restarts the preload when it is on).';
+        }
+        if ( in_array( $key, self::$used_css_affecting, true ) ) {
+            $out[] = 'Rebuilds the Used CSS.';
+        }
+        if ( in_array( $key, self::$htaccess_affecting, true ) ) {
+            $out[] = 'Rewrites the .htaccess rules.';
+        }
+        if ( 'easyopt_cache_preload' === $key ) {
+            $out[] = 'Starts or stops the preload.';
+        }
+        return $out;
+    }
+
+    /** (2.8.0) Is this deferred operation still waiting to run? */
+    public static function pending( $op ) {
+        return ! empty( self::$deferred[ $op ] );
     }
 
     /**
