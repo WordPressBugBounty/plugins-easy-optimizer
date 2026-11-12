@@ -774,8 +774,43 @@ class EasyOpt_LCP {
             return $html;
         }
 
-        $preload_html  = '';
-        $matching_urls = array();
+        // IDEMPOTENCE: a document that already carries an LCP preload has been
+        // through this processor. The preload runner fetches pages over HTTP
+        // with a synthetic logged-in cookie so the live output buffer runs
+        // (see EasyOpt_Cache_Preload::build_warm_headers), then
+        // optimize_prefetched_html() runs the whole pipeline over that
+        // already-optimized body a second time. Without this check a
+        // prefetch-generated page carried two copies of every LCP preload.
+        if ( false !== stripos( $html, 'data-easyopt-lcp=' ) ) {
+            return $html;
+        }
+
+        // (2.8.1) Boost the <img> tags BEFORE building the preloads, so each
+        // preload can name exactly what its (de-lazified, CDN-rewritten) <img>
+        // will load. Only the hero measured for the viewport this file is
+        // rendered for gets fetchpriority="high"; the other viewport's hero is
+        // usually display:none here and only kept eager, so it no longer
+        // competes with the real one at top priority.
+        $device     = self::render_viewport();
+        $high_urls  = array();
+        $eager_urls = array();
+        foreach ( $rows as $row ) {
+            $kind = isset( $row['element_kind'] ) ? $row['element_kind'] : 'img';
+            if ( ! in_array( $kind, array( 'img', 'img-srcset', 'picture' ), true )
+                 || '' === (string) $row['image_url'] || self::is_video_url( $row['image_url'] ) ) {
+                continue;
+            }
+            if ( '' === $device || $device === $row['viewport'] ) {
+                $high_urls[] = $row['image_url'];
+            } else {
+                $eager_urls[] = $row['image_url'];
+            }
+        }
+        if ( ! empty( $high_urls ) || ! empty( $eager_urls ) ) {
+            $html = self::boost_matching_images( $html, $high_urls, $eager_urls );
+        }
+
+        $preload_html = '';
 
         foreach ( $rows as $row ) {
             $kind = isset( $row['element_kind'] ) ? $row['element_kind'] : 'img';
@@ -792,14 +827,33 @@ class EasyOpt_LCP {
             }
 
             // Every kind that resolves to an image URL gets a preload.
-            $link  = '<link rel="preload" as="image" fetchpriority="high"';
-            $link .= ' href="' . esc_url( $row['image_url'] ) . '"';
+            $link = '<link rel="preload" as="image" fetchpriority="high"';
 
-            // Responsive preload — only meaningful for <img>/<picture> sources.
-            if ( 'background' !== $kind && ! empty( $row['srcset'] ) ) {
-                $link .= ' imagesrcset="' . esc_attr( $row['srcset'] ) . '"';
-                if ( ! empty( $row['sizes'] ) ) {
-                    $link .= ' imagesizes="' . esc_attr( $row['sizes'] ) . '"';
+            // (2.8.1) A plain <img> hero: copy src/srcset/sizes from the tag as
+            // it stands in this document. The stored row is what one visitor's
+            // browser reported, possibly before the CDN was switched on; a
+            // preload that names a different file than the <img> is a second
+            // download, not a head start. The values are already HTML-escaped.
+            $tag = in_array( $kind, array( 'img', 'img-srcset' ), true )
+                ? self::img_source_from_markup( $html, $row['image_url'] )
+                : null;
+            if ( $tag ) {
+                $link .= ' href="' . $tag['src'] . '"';
+                if ( '' !== $tag['srcset'] ) {
+                    $link .= ' imagesrcset="' . $tag['srcset'] . '"';
+                    if ( '' !== $tag['sizes'] ) {
+                        $link .= ' imagesizes="' . $tag['sizes'] . '"';
+                    }
+                }
+            } else {
+                $link .= ' href="' . esc_url( $row['image_url'] ) . '"';
+
+                // Responsive preload — only meaningful for <img>/<picture> sources.
+                if ( 'background' !== $kind && ! empty( $row['srcset'] ) ) {
+                    $link .= ' imagesrcset="' . esc_attr( $row['srcset'] ) . '"';
+                    if ( ! empty( $row['sizes'] ) ) {
+                        $link .= ' imagesizes="' . esc_attr( $row['sizes'] ) . '"';
+                    }
                 }
             }
             // (2.7.2) Always scoped to the viewport it was measured on. Serving a
@@ -812,42 +866,79 @@ class EasyOpt_LCP {
             $link .= ' media="' . esc_attr( $media ) . '"';
             $link .= ' data-easyopt-lcp="' . esc_attr( $row['viewport'] ) . '">';
             $preload_html .= $link;
-
-            // Only element kinds backed by an <img> get the fetchpriority/eager
-            // boost. Background-image LCP has no <img> to mark (the preload is
-            // the whole win); video-poster is handled by the lazyload module.
-            if ( in_array( $kind, array( 'img', 'img-srcset', 'picture' ), true ) ) {
-                $matching_urls[] = $row['image_url'];
-            }
         }
 
-        // IDEMPOTENCE: skip if this document already carries an LCP preload.
-        //
-        // The preload runner fetches pages over HTTP with a synthetic
-        // logged-in cookie so the live output buffer runs (see
-        // EasyOpt_Cache_Preload::build_warm_headers), then
-        // optimize_prefetched_html() runs the whole pipeline over that
-        // already-optimized body a second time. Without this check a
-        // prefetch-generated page carried two copies of every LCP preload.
-        // Harmless to the browser, which dedupes identical preloads, but it
-        // is wasted <head> weight and the same defect that put two delay-JS
-        // loaders on the page.
-        if ( '' !== $preload_html && false === stripos( $html, 'data-easyopt-lcp=' ) ) {
+        if ( '' !== $preload_html ) {
             // Inject before </head>. The Used-CSS injector runs after this
-            // processor and relocates this preload to sit right after the
-            // critical CSS (above the font preloads); if Used CSS is disabled on
-            // this page, it stays here.
+            // processor and relocates this preload to sit right above the
+            // critical CSS; if Used CSS is disabled on this page, it stays here.
             $head_close = stripos( $html, '</head>' );
             if ( false !== $head_close ) {
                 $html = substr( $html, 0, $head_close ) . $preload_html . substr( $html, $head_close );
             }
         }
 
-        if ( ! empty( $matching_urls ) ) {
-            $html = self::boost_matching_images( $html, $matching_urls );
-        }
-
         return $html;
+    }
+
+    /**
+     * (2.8.1) The viewport this document is being rendered for: 'mobile' or
+     * 'desktop', or '' when one cached file serves both (page cache on with
+     * "separate mobile cache" off) and the hero of each must be boosted.
+     *
+     * Same device test as the page-cache writer (cache-common is_mobile_ua),
+     * so a mobile cache file is always treated as mobile. The preload runner
+     * pins the device of the variant it is building through the filter, since
+     * its own request carries no visitor User-Agent.
+     *
+     * @return string
+     */
+    private static function render_viewport() {
+        if ( (int) EasyOpt_Config::get( 'cache', 0 ) && ! (int) EasyOpt_Config::get( 'cache_separate_mobile', 1 ) ) {
+            return '';
+        }
+        $pinned = apply_filters( 'easyopt_lcp_render_viewport', '' );
+        if ( 'mobile' === $pinned || 'desktop' === $pinned ) {
+            return $pinned;
+        }
+        $ua = isset( $_SERVER['HTTP_USER_AGENT'] ) ? (string) wp_unslash( $_SERVER['HTTP_USER_AGENT'] ) : '';
+        if ( '' === $ua || ! function_exists( 'EasyOpt\\Cache\\is_mobile_ua' ) ) {
+            return '';
+        }
+        return \EasyOpt\Cache\is_mobile_ua( $ua ) ? 'mobile' : 'desktop';
+    }
+
+    /**
+     * (2.8.1) src / srcset / sizes of the first <img> in the document that
+     * shows the given image, raw as written in the tag (still HTML-escaped).
+     *
+     * @param string $html
+     * @param string $image_url Stored LCP image URL (origin or CDN form).
+     * @return array|null Null when no <img> with a usable src matches.
+     */
+    private static function img_source_from_markup( $html, $image_url ) {
+        $key = self::url_path_key( $image_url );
+        if ( '' === $key || ! preg_match_all( '#<img\b[^>]*>#i', $html, $mm ) ) {
+            return null;
+        }
+        foreach ( $mm[0] as $tag ) {
+            if ( '' === self::img_atts_match_paths( $tag, array( $key => 1 ) ) ) {
+                continue;
+            }
+            if ( ! preg_match( '/(?<![-\w])src\s*=\s*["\']([^"\']+)["\']/i', $tag, $s )
+                 || $key !== self::url_path_key( $s[1] ) ) {
+                return null; // real URL still parked in data-src — nothing safe to copy
+            }
+            $out = array( 'src' => trim( $s[1] ), 'srcset' => '', 'sizes' => '' );
+            if ( preg_match( '/(?<![-\w])srcset\s*=\s*["\']([^"\']+)["\']/i', $tag, $ss ) ) {
+                $out['srcset'] = trim( $ss[1] );
+                if ( preg_match( '/(?<![-\w])sizes\s*=\s*["\']([^"\']+)["\']/i', $tag, $sz ) ) {
+                    $out['sizes'] = trim( $sz[1] );
+                }
+            }
+            return $out;
+        }
+        return null;
     }
 
     /**
@@ -857,20 +948,33 @@ class EasyOpt_LCP {
      * Matching is by FULL URL PATH (2.4.3) — not bare filename — so two
      * different images that happen to share a basename in different folders
      * are never confused (the old false-positive boost).
+     *
+     * (2.8.1) $eager_urls are the heroes measured on the OTHER viewport: they
+     * are de-lazified and kept eager, without fetchpriority. Once a hero of
+     * this viewport is found, any other <img> that carried fetchpriority="high"
+     * (WordPress adds it to the first large image, often the logo) drops to
+     * plain eager too, so the measured hero is the only top-priority image.
      */
-    private static function boost_matching_images( $html, $urls ) {
+    private static function boost_matching_images( $html, $urls, $eager_urls = array() ) {
 
-        // Map normalized full path => 1 for O(1) lookup.
+        // Map normalized full path => 'high' | 'eager' for O(1) lookup.
         $paths = array();
+        foreach ( $eager_urls as $u ) {
+            $p = self::url_path_key( $u );
+            if ( '' !== $p ) {
+                $paths[ $p ] = 'eager';
+            }
+        }
         foreach ( $urls as $u ) {
             $p = self::url_path_key( $u );
             if ( '' !== $p ) {
-                $paths[ $p ] = 1;
+                $paths[ $p ] = 'high';
             }
         }
         if ( empty( $paths ) ) {
             return $html;
         }
+        $boosted = 0;
 
         // ── (2.5.2) Picture-aware pass FIRST ──
         // When the LCP <img> lives inside a <picture> whose <source> tags are
@@ -902,20 +1006,25 @@ class EasyOpt_LCP {
             $html
         );
 
-        return preg_replace_callback(
+        $html = preg_replace_callback(
             '#<img\b([^>]*)>#i',
-            function ( $m ) use ( $paths ) {
+            function ( $m ) use ( $paths, &$boosted ) {
                 $atts = $m[1];
 
                 // (2.5.2) Match by src OR data-src path — third-party
                 // lazyloaders (lazysizes & friends) keep the real URL in
                 // data-src, sometimes with only a placeholder in src.
-                if ( ! self::img_atts_match_paths( $m[0], $paths ) ) {
+                $key = self::img_atts_match_paths( $m[0], $paths );
+                if ( '' === $key ) {
                     return $m[0];
+                }
+                $high = ( 'high' === $paths[ $key ] );
+                if ( $high ) {
+                    $boosted++;
                 }
 
                 // Already marked high? Leave alone.
-                if ( preg_match( '/\bfetchpriority\s*=\s*["\']high["\']/i', $atts ) ) {
+                if ( $high && preg_match( '/\bfetchpriority\s*=\s*["\']high["\']/i', $atts ) ) {
                     return $m[0];
                 }
 
@@ -965,9 +1074,32 @@ class EasyOpt_LCP {
 
                 $atts = preg_replace( '/\s+loading\s*=\s*["\'][^"\']*["\']/i', '', $atts );
                 $atts = preg_replace( '/\s+fetchpriority\s*=\s*["\'][^"\']*["\']/i', '', $atts );
-                $atts = ' fetchpriority="high" loading="eager"' . $atts;
+                $atts = ( $high ? ' fetchpriority="high"' : '' ) . ' loading="eager"' . $atts;
 
                 return '<img' . $atts . '>';
+            },
+            $html
+        );
+
+        if ( ! $boosted || ! is_string( $html ) ) {
+            return $html;
+        }
+
+        // The hero is known and in this document: nothing else is top priority.
+        // loading="eager" keeps the lazyload pass off the demoted image, as
+        // fetchpriority="high" did.
+        return preg_replace_callback(
+            '#<img\b[^>]*\bfetchpriority\s*=\s*["\']high["\'][^>]*>#i',
+            function ( $m ) use ( $paths ) {
+                $key = self::img_atts_match_paths( $m[0], $paths );
+                if ( '' !== $key && 'high' === $paths[ $key ] ) {
+                    return $m[0];
+                }
+                $tag = preg_replace( '/\s+fetchpriority\s*=\s*["\'][^"\']*["\']/i', '', $m[0] );
+                if ( ! preg_match( '/\sloading\s*=/i', $tag ) ) {
+                    $tag = '<img loading="eager"' . substr( $tag, 4 );
+                }
+                return $tag;
             },
             $html
         );
@@ -979,19 +1111,19 @@ class EasyOpt_LCP {
      * identically.
      *
      * @param string $img_tag Full <img ...> tag text.
-     * @param array  $paths   Normalized path => 1 lookup map.
-     * @return bool
+     * @param array  $paths   Normalized path => value lookup map.
+     * @return string The matched path key, or '' when the tag matches none.
      */
     private static function img_atts_match_paths( $img_tag, $paths ) {
         foreach ( array( '/(?<![-\w])src\s*=\s*["\']([^"\']+)["\']/i', '/\bdata-src\s*=\s*["\']([^"\']+)["\']/i' ) as $rx ) {
             if ( preg_match( $rx, $img_tag, $m ) ) {
                 $key = self::url_path_key( $m[1] );
                 if ( '' !== $key && isset( $paths[ $key ] ) ) {
-                    return true;
+                    return $key;
                 }
             }
         }
-        return false;
+        return '';
     }
 
     /**

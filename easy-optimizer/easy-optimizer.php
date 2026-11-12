@@ -3,7 +3,7 @@
  * Plugin Name: Easy Optimizer – Speed, Cache & Core Web Vitals for PageSpeed
  * Plugin URI:  https://fluxpress.io
  * Description: Page cache, lazy load, used CSS, delay JS, font optimization, image CDN, LCP preload and more — everything you need to ace Core Web Vitals, in one plugin.
- * Version:     2.8.0
+ * Version:     2.8.1
  * Author:      FluxPress
  * Author URI:  https://fluxpress.io
  * Text Domain: easy-optimizer
@@ -24,7 +24,7 @@ if ( ! defined( 'EASYOPT_PLUGIN_FILE' ) ) {
     define( 'EASYOPT_PLUGIN_FILE', __FILE__ );
 }
 if ( ! defined( 'EASYOPT_VERSION' ) ) {
-    define( 'EASYOPT_VERSION', '2.8.0' );
+    define( 'EASYOPT_VERSION', '2.8.1' );
 }
 if ( ! defined( 'EASYOPT_CSS_LOGIC_VERSION' ) ) {
     // (2.5.0 / A2) Last plugin version in which the Used-CSS strip/keep/
@@ -39,7 +39,9 @@ if ( ! defined( 'EASYOPT_CSS_LOGIC_VERSION' ) ) {
     // (2.7.2) Tokenizer now honours `\` escapes; 2.7.1 cut a stylesheet off at
     // the first escaped quote (Tailwind `bg-\[url\(\'…`), so existing .used.css
     // files are missing rules and must be rebuilt.
-    define( 'EASYOPT_CSS_LOGIC_VERSION', '2.7.2' );
+    // (2.8.1) Unreferenced @keyframes are pruned at build time; existing
+    // .used.css files still carry them until rebuilt.
+    define( 'EASYOPT_CSS_LOGIC_VERSION', '2.8.1' );
 }
 if ( ! defined( 'EASYOPT_DIR' ) ) {
     define( 'EASYOPT_DIR', plugin_dir_path( EASYOPT_PLUGIN_FILE ) );

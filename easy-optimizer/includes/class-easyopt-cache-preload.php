@@ -2112,7 +2112,7 @@ class EasyOpt_Cache_Preload {
             }
 
             if ( is_string( $body ) && '' !== $body && class_exists( 'EasyOpt_Cache' ) ) {
-                $body = self::optimize_prefetched_html( $url, $body );
+                $body = self::optimize_prefetched_html( $url, $body, $is_mobile );
                 EasyOpt_Cache::store_prefetched_html( $url, $body, $is_mobile );
 
                 // (2.4.9) We deliberately do NOT flag the live buffer unreliable
@@ -2569,7 +2569,7 @@ class EasyOpt_Cache_Preload {
         }
         if ( is_string( $body ) && '' !== $body ) {
             // Optimise + store under the SOURCE key (same file as the target).
-            $body = self::optimize_prefetched_html( $source_url, $body );
+            $body = self::optimize_prefetched_html( $source_url, $body, $is_mobile );
             EasyOpt_Cache::store_prefetched_html( $source_url, $body, $is_mobile );
         }
     }
@@ -2837,7 +2837,7 @@ class EasyOpt_Cache_Preload {
             }
             if ( 200 === $code || 206 === $code ) {
                 if ( is_string( $body ) && '' !== $body && class_exists( 'EasyOpt_Cache' ) ) {
-                    $opt = self::optimize_prefetched_html( $info['url'], $body );
+                    $opt = self::optimize_prefetched_html( $info['url'], $body, $info['is_mobile'] );
                     // store_prefetched_html() confirms the results ledger
                     // (C3) after a successful write.
                     EasyOpt_Cache::store_prefetched_html( $info['url'], $opt, $info['is_mobile'] );
@@ -3043,9 +3043,10 @@ class EasyOpt_Cache_Preload {
      *
      * @param string $url  Target URL whose HTML this is.
      * @param string $html Fetched HTML body.
+     * @param bool|null $is_mobile Device variant being built (2.8.1), null if unknown.
      * @return string Optimized HTML, or the input unchanged on failure.
      */
-    private static function optimize_prefetched_html( $url, $html ) {
+    private static function optimize_prefetched_html( $url, $html, $is_mobile = null ) {
         if ( ! is_string( $html ) || '' === $html ) {
             return $html;
         }
@@ -3093,6 +3094,12 @@ class EasyOpt_Cache_Preload {
         add_filter( 'easyopt_rucss_post_id', $pin_pid );
         add_filter( 'easyopt_rucss_logged_in', '__return_true' );
         add_filter( 'easyopt_lcp_logged_in', '__return_true' );
+        // (2.8.1) This request has no visitor User-Agent; tell the LCP pass which
+        // device variant it is building.
+        $pin_vp = function () use ( $is_mobile ) {
+            return null === $is_mobile ? '' : ( $is_mobile ? 'mobile' : 'desktop' );
+        };
+        add_filter( 'easyopt_lcp_render_viewport', $pin_vp );
         add_filter( 'easyopt_delay_js_admin', '__return_true' );
         add_filter( 'easyopt_defer_js_admin', '__return_true' );
 
@@ -3106,6 +3113,7 @@ class EasyOpt_Cache_Preload {
         remove_filter( 'easyopt_rucss_post_id', $pin_pid );
         remove_filter( 'easyopt_rucss_logged_in', '__return_true' );
         remove_filter( 'easyopt_lcp_logged_in', '__return_true' );
+        remove_filter( 'easyopt_lcp_render_viewport', $pin_vp );
         remove_filter( 'easyopt_delay_js_admin', '__return_true' );
         remove_filter( 'easyopt_defer_js_admin', '__return_true' );
         if ( null === $saved_uri ) {

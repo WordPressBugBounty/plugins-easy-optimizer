@@ -470,6 +470,10 @@ class EasyOpt_Unused_CSS {
         if ( ! $used_css_exists ) {
             $used_css_string = apply_filters( 'easyopt_used_css', $used_css_string );
 
+            // (2.8.1) @keyframes are kept whole by the tokenizer; drop the ones
+            // neither the kept CSS nor this page refers to.
+            $used_css_string = EasyOpt_CSS_Tokenizer::prune_keyframes( $used_css_string, $html );
+
             // (2.6.4) Final structural safety net. Guarantee the buffer we are
             // about to cache and inject is brace-balanced, so a single unclosed
             // block in ANY contributing source — a passthrough builder sheet, a
@@ -595,20 +599,23 @@ class EasyOpt_Unused_CSS {
                 $output = '<style id="easyopt-used-css">' . $css . '</style>';
             }
 
-            // Place preloads right after the critical CSS, order-independent:
-            // (1) relocate the LCP preload that EasyOpt_LCP injected earlier
-            // (before </head>) so it sits immediately after this <style>, and
-            // (2) append the ATF-gated font preloads resolved above. No markers
-            // and no sidecar round-trip, so nothing lands out of order. LCP
-            // ends up above the font preloads, both after the CSS.
+            // (2.8.1) Right after <head>: LCP preload, Used CSS, font preloads.
+            // The LCP preload EasyOpt_LCP injected before </head> is relocated
+            // ABOVE the CSS: behind a few hundred KB of inline CSS the browser
+            // could not start the hero image until it had read all of it. The
+            // font preloads resolved above stay after the CSS.
             $lcp_links = '';
             if ( preg_match_all( '/<link\b[^>]*data-easyopt-lcp[^>]*>/i', $html, $mm ) && ! empty( $mm[0] ) ) {
                 $lcp_links = implode( '', $mm[0] );
                 $html      = preg_replace( '/<link\b[^>]*data-easyopt-lcp[^>]*>/i', '', $html );
             }
-            $output .= $lcp_links . $font_links;
+            $output = $lcp_links . $output . $font_links;
 
-            $html = preg_replace( '/(<head\b[^>]*>)/i', '$1' . $output, $html, 1 );
+            // Spliced by offset, not preg_replace: CSS may contain `$1` or `\1`.
+            if ( preg_match( '/<head\b[^>]*>/i', $html, $hm, PREG_OFFSET_CAPTURE ) ) {
+                $at   = $hm[0][1] + strlen( $hm[0][0] );
+                $html = substr( $html, 0, $at ) . $output . substr( $html, $at );
+            }
         }
 
         // ── Step 5: Delayed-style loader script before </body> ──

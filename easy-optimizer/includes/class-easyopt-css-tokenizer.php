@@ -992,6 +992,100 @@ class EasyOpt_CSS_Tokenizer {
     }
 
     /* ───────────────────────────────────────────────
+     *  (2.8.1) Unused @keyframes
+     * ─────────────────────────────────────────────── */
+
+    /**
+     * Drop @keyframes blocks nothing refers to.
+     *
+     * to_items() keeps every @keyframes whole, because a keyframes block has no
+     * selector to match. On a page built with an animation library that is
+     * most of the file: every animation the library ships, for a page that
+     * uses two. A block is kept when its name appears as a whole identifier
+     * anywhere in the rest of the CSS (an animation / animation-name value, a
+     * custom property, the `.fadeIn` rule whose class JS adds later) or
+     * anywhere in $context — the page HTML, which covers inline styles, inline
+     * scripts and builder settings such as {"_animation":"fadeIn"}. A name
+     * mentioned by chance is kept too; that costs bytes, never an animation.
+     *
+     * String/comment-aware. Anything it cannot read with certainty (an
+     * unclosed block, an escaped or quoted name) is left in place.
+     *
+     * @param string $css
+     * @param string $context Extra text whose identifiers also count as uses.
+     * @return string
+     */
+    public static function prune_keyframes( $css, $context = '' ) {
+        if ( ! is_string( $css ) || false === stripos( $css, 'keyframes' ) ) {
+            return (string) $css;
+        }
+
+        $n      = strlen( $css );
+        $i      = 0;
+        $blocks = array(); // [ start, end (exclusive), name ]
+        while ( $i < $n ) {
+            $c = $css[ $i ];
+            if ( '/' === $c && $i + 1 < $n && '*' === $css[ $i + 1 ] ) {
+                $e = strpos( $css, '*/', $i + 2 );
+                $i = false === $e ? $n : $e + 2;
+                continue;
+            }
+            if ( '\\' === $c ) { $i += 2; continue; }
+            if ( '"' === $c || "'" === $c ) { self::consume_string( $css, $i, $n ); continue; }
+            if ( '@' !== $c || ! preg_match( '/\G@(?:-[a-z]+-)?keyframes\s+(-?[A-Za-z_][\w-]*)\s*\{/i', $css, $m, 0, $i ) ) {
+                $i++;
+                continue;
+            }
+            $start = $i;
+            $i    += strlen( $m[0] );
+            $depth = 1;
+            while ( $i < $n && $depth > 0 ) {
+                $c = $css[ $i ];
+                if ( '/' === $c && $i + 1 < $n && '*' === $css[ $i + 1 ] ) {
+                    $e = strpos( $css, '*/', $i + 2 );
+                    $i = false === $e ? $n : $e + 2;
+                    continue;
+                }
+                if ( '\\' === $c ) { $i += 2; continue; }
+                if ( '"' === $c || "'" === $c ) { self::consume_string( $css, $i, $n ); continue; }
+                if ( '{' === $c ) { $depth++; } elseif ( '}' === $c ) { $depth--; }
+                $i++;
+            }
+            if ( $depth > 0 ) {
+                return $css; // unclosed block — touch nothing
+            }
+            $blocks[] = array( $start, $i, $m[1] );
+        }
+        if ( empty( $blocks ) ) {
+            return $css;
+        }
+
+        // Everything that is not a keyframes block, plus the caller's context.
+        $rest = '';
+        $at   = 0;
+        foreach ( $blocks as $b ) {
+            $rest .= substr( $css, $at, $b[0] - $at ) . ' ';
+            $at    = $b[1];
+        }
+        $rest .= substr( $css, $at ) . ' ' . $context;
+        if ( ! preg_match_all( '/-?[A-Za-z_][\w-]*/', $rest, $ids ) ) {
+            return $css;
+        }
+        $used = array_flip( $ids[0] );
+
+        $out = '';
+        $at  = 0;
+        foreach ( $blocks as $b ) {
+            $out .= substr( $css, $at, $b[0] - $at );
+            if ( isset( $used[ $b[2] ] ) ) {
+                $out .= substr( $css, $b[0], $b[1] - $b[0] );
+            }
+            $at = $b[1];
+        }
+        return $out . substr( $css, $at );
+    }
+
+    /* ───────────────────────────────────────────────
      *  Tiny helpers
      * ─────────────────────────────────────────────── */
 

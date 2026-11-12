@@ -195,12 +195,16 @@ class EasyOpt_LazyLoad {
                         $image_index++;
                         break;
                     }
+                    // (2.8.1) Dimensions first. img_eligible() is the LAZY-LOAD
+                    // test: it turns away fetchpriority="high" / loading="eager"
+                    // images, which is the hero the LCP pass has just marked —
+                    // the image whose missing size shifts the most layout.
+                    if ( $add_dims ) {
+                        self::img_add_dims( $p );
+                    }
                     if ( ! self::img_eligible( $p, $exclude_lines ) ) {
                         $image_index++;
                         break;
-                    }
-                    if ( $add_dims ) {
-                        self::img_add_dims( $p );
                     }
                     if ( $lazy_images && $image_index >= $exclude_first ) {
                         if ( $native ) {
@@ -720,7 +724,18 @@ class EasyOpt_LazyLoad {
         if ( '' !== $w && '' !== $h ) {
             return;
         }
-        $src = (string) $p->get_attribute( 'src' );
+        // Another lazy-loader holds the real URL in a data attribute; its src
+        // is a placeholder whose size would be the wrong one to write.
+        if ( null !== $p->get_attribute( 'data-src' ) || null !== $p->get_attribute( 'data-lazy-src' ) ) {
+            return;
+        }
+        $src = trim( (string) $p->get_attribute( 'src' ) );
+        // (2.8.1) No src, only a srcset: every candidate is the same picture,
+        // so the first one gives the aspect ratio.
+        if ( '' === $src || '#' === $src ) {
+            $cand = preg_split( '/\s+/', trim( (string) $p->get_attribute( 'srcset' ) ), 2 );
+            $src  = (string) $cand[0];
+        }
         if ( '' === $src || false !== stripos( $src, 'data:' ) ) {
             return;
         }
@@ -985,6 +1000,11 @@ class EasyOpt_LazyLoad {
     private static function url_to_path( $url ) {
         if ( empty( $url ) ) {
             return false;
+        }
+        // (2.8.1) The CDN rewrite runs before this pass, so a Cloud image is
+        // already …/plain/https://site/wp-content/…; read the file it wraps.
+        if ( false !== stripos( $url, '/plain/' ) && class_exists( 'EasyOpt_Rest_Cloud' ) ) {
+            $url = EasyOpt_Rest_Cloud::unwrap_cdn_url( $url );
         }
         if ( 0 === strpos( $url, '//' ) ) {
             $url = ( is_ssl() ? 'https:' : 'http:' ) . $url;

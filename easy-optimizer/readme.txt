@@ -5,7 +5,7 @@ Tags: speed, cache, core web vitals, pagespeed, lazy load
 Requires at least: 6.4
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 2.8.0
+Stable tag: 2.8.1
 License: GNU General Public License v2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -254,6 +254,13 @@ Easy Optimizer's usage analytics are opt-in and disabled by default. When enable
 
 == Changelog ==
 
+= 2.8.1 =
+* Fixed: with Remove Unused CSS on, the preload for the main image was placed after the Used CSS, so the browser could not start loading that image until it had read all of the CSS. The image preload now comes first, then the Used CSS, then the font preloads.
+* Fixed: the Used CSS kept every animation (@keyframes) of an animation library, even on a page that uses one or two. Animations that neither the kept CSS nor the page refers to are now left out. On Elementor pages this can remove a third of the inline CSS. Clear Used CSS once to rebuild it.
+* Fixed: the preload for the main image could name a different file than the image itself loads, for example the original file when the image is served from the CDN, so the image was downloaded twice. The preload now copies the address and sizes from the image tag.
+* Fixed: when the main image differs between phones and desktops, both were marked as top priority on every device, along with the first large image WordPress marks itself (often the logo). Only the main image of the device the page is built for is top priority now; the others still load straight away, at normal priority.
+* Fixed: Add Missing Image Dimensions skipped the images that shift the page most. It left out the main image (any image marked top priority or eager), every image served through Cloud Optimization, and images that have a srcset but an empty src. All three now get their width and height.
+
 = 2.8.0 =
 * Changed: a new admin layout. The sidebar is shorter: Dashboard, then Speed (Cache, Optimization, Media, Cloudflare & CDN), Server (Backend), Tools (Lighthouse Fixes, Diagnostics), Cloud Optimization and Settings. Each section's pages are tabs across the top, settings are grouped into cards, every main on/off switch is the same size, and every exclude list opens in a popup. Nothing was removed and your settings are unchanged. Bloat Removal is now WordPress Cleanup, under Backend, and Autoload Health has its own tab there.
 * Fixed: on sites using plain permalinks, the URL Inspector, the Debug Issues page check, Backend Analyzer's per-page results and the Compatibility refresh failed with a "No route" error.
@@ -397,6 +404,9 @@ Easy Optimizer's usage analytics are opt-in and disabled by default. When enable
 Full release notes for 2.7.5 and older are in the [2.7.5 readme](https://plugins.svn.wordpress.org/easy-optimizer/tags/2.7.5/readme.txt).
 
 == Upgrade Notice ==
+
+= 2.8.1 =
+Faster main-image loading: the image preload now sits above the Used CSS and names the file the image really loads, only one image per device is top priority, unused animations are left out of the Used CSS, and Add Missing Image Dimensions now covers the main image and Cloud images.
 
 = 2.8.0 =
 A shorter admin layout with each section's pages as tabs. Delay and Defer JavaScript can run together with separate exclusion lists (your settings carry over), plus one-click exclusions, a URL Inspector, YouTube preview images, CSS background lazy loading, your own CDN with a safety net, and WP-CLI commands. Credentials are no longer autoloaded or sent to the browser.
